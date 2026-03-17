@@ -73,4 +73,4 @@ void ThreadPool::shutdown() {
     }
 }
 
-} // namespace newsscope
+}
