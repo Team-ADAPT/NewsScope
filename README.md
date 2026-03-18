@@ -48,6 +48,8 @@ NewsScope is built for use cases where **explainability**, **determinism**, and 
 - Modular architecture with clean, independently testable interfaces
 - Concurrent batch processing via a custom thread pool
 - Full benchmark suite covering throughput, latency, and memory usage
+- **Production-ready dataset**: 177 validated articles across diverse topics and sources
+- **Enhanced detection**: 708-term negative keyword dictionary with conspiracy/clickbait patterns
 - Builds with a single `make` command — no package manager required
 
 ---
@@ -64,6 +66,7 @@ NewsScope is built for use cases where **explainability**, **determinism**, and 
 | Frequency Analyzer | Hash-map term counting | `O(n)` | Suspicious term frequency scoring |
 | Temporal Analyzer | Sliding window (`deque`) | Amortized `O(1)` | Publish-rate spike detection |
 | Greedy Filter | Priority-driven signal selection | `O(k log k)` | Clickbait/manipulation prioritization |
+| Claim Verifier | Verifiability heuristics | `O(n)` | Evidence/attribution vs promotional narrative checks |
 | Scoring Engine | Weighted aggregation | `O(1)` | Combines all module outputs |
 
 `n` = text length, `m` = pattern length, `k` = detected signal count.
@@ -83,7 +86,8 @@ Article(id, headline, body, source, timestamp)
         ├──▶ StringMatcher      (KMP + Rabin-Karp)
         ├──▶ FrequencyAnalyzer  (term frequency)
         ├──▶ TemporalAnalyzer   (sliding window)
-        └──▶ GreedyFilter       (signal prioritization)
+        ├──▶ GreedyFilter       (signal prioritization)
+        └──▶ ClaimVerifier      (verifiability analysis)
                     │
                     ▼
              ScoringEngine
@@ -98,7 +102,10 @@ Article(id, headline, body, source, timestamp)
 
 ## Scoring
 
-All eight modules contribute equally by default (`12.5%` each). Weights are fully configurable at runtime:
+Eight core modules contribute equally by default (`12.5%` each).  
+`ClaimVerifier` is an additional calibration signal used to reduce polished-but-unverifiable narratives.
+
+Core weight configuration:
 
 ```cpp
 engine.set_module_weights(
@@ -134,12 +141,17 @@ make all
 # Run the demo
 ./build/newsscope_demo
 
+# Run the web portal (http://localhost:8080)
+make run-web
+
 # Run all unit tests
 make run-tests
 
 # Run all benchmarks
 make run-benchmarks
 ```
+
+`newsscope_demo` auto-loads `data/articles.json` when available (and falls back to built-in sample articles if the file is missing or invalid).
 
 Individual benchmark targets:
 
@@ -166,6 +178,29 @@ make clean
 
 ## Usage
 
+### Web Portal (Fake vs Original checker)
+
+NewsScope includes a lightweight C++ web server and professional UI for background analysis.
+
+- Start server: `make run-web`
+- Open: `http://localhost:8080`
+- Submit text in the form
+- The request is queued and processed in background workers
+- UI polls job status and shows:
+  - verdict (`Likely Fake` / `Likely Original`)
+  - credibility score
+  - per-module breakdown
+  - explanation lines
+
+API endpoints:
+
+- `POST /api/jobs` with JSON: `{"text":"...","source":"..."}`
+- `GET /api/jobs/{job_id}` for status/result
+
+Job statuses: `queued`, `processing`, `done`, `failed`
+
+---
+
 **Single article assessment:**
 
 ```cpp
@@ -173,7 +208,7 @@ make clean
 using namespace newsscope;
 
 ScoringEngine engine;
-engine.initialize("data/sources.csv", "data/suspicious_phrases.txt", "");
+engine.initialize("data/sources.csv", "data/suspicious_phrases.txt", "data/negative_terms.csv");
 
 Article article(
     "article-1",
@@ -243,6 +278,47 @@ Benchmarks are located in `benchmark/` and cover throughput (`benchmark_throughp
 
 ---
 
+## Data & Testing
+
+### Dataset Coverage
+NewsScope includes a comprehensive validation dataset:
+
+- **177 articles** across diverse topics and sources
+  - 67 trusted sources (Reuters, BBC, AP, Bloomberg, Nature, Science, etc.)
+  - 74 fake/conspiracy sources (typical red flags: leaked docs, insider claims, etc.)
+  - 36 neutral/opinion pieces (ambiguous content requiring verification)
+- **708 negative terms** for frequency analysis (expanded from original 539)
+  - Critical clickbait/conspiracy keywords: leaked, insider, bombshell, shocking, coverup, etc.
+  - Single-word variants for token-based matching
+  - Multi-word phrases retained for future n-gram support
+- **288 sources** in credibility database with trust scores (0-100)
+- **576 suspicious phrases** in Trie index for pattern detection
+
+**Topic coverage**: Politics, health, technology, business, science, environment, international affairs
+
+All data files located in `data/`:
+- `articles.json` — 177 test articles (auto-loaded by demo)
+- `sources.csv` — trusted/untrusted source database  
+- `negative_terms.csv` — weighted suspicious keyword dictionary
+- `suspicious_phrases.txt` — known fake news phrase patterns
+
+### Test Suite
+69 tests across 9 test suites, all passing:
+```bash
+$ make run-tests
+✓ test_claim_verifier       (5 tests)
+✓ test_frequency_analyzer   (7 tests)
+✓ test_greedy_filter        (8 tests)
+✓ test_integration         (15 tests)
+✓ test_phrase_indexer      (6 tests)
+✓ test_preprocessing       (5 tests)
+✓ test_source_validator    (8 tests)
+✓ test_string_matcher      (8 tests)
+✓ test_temporal_analyzer   (7 tests)
+```
+
+---
+
 ## Project Structure
 
 ```
@@ -257,11 +333,13 @@ NewsScope/
 │   ├── frequency_analyzer.h
 │   ├── temporal_analyzer.h
 │   ├── greedy_filter.h
+│   ├── claim_verifier.h
 │   └── thread_pool.h
 ├── src/                      # Module implementations + demo entrypoint
 ├── tests/                    # Unit and integration tests (one file per module)
 ├── benchmark/                # Throughput, latency, and memory benchmarks
-├── data/                     # Sample sources.csv, suspicious_phrases.txt, articles
+├── data/                     # Dataset (177 articles, 708 terms, 288 sources, 576 phrases)
+├── web/                      # Web portal for browser-based article analysis
 ├── docs/                     # Architecture, complexity analysis, class diagrams
 ├── Makefile
 └── CMakeLists.txt

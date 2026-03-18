@@ -1,0 +1,36 @@
++------------------+        +--------------------+
+|     Article      |        | CredibilityResult  |
++------------------+        +--------------------+
+| id               |        | overall_score      |
+| headline         |        | module_scores      |
+| body             |        | explanations       |
+| source           |        | processing_time    |
+| timestamp        |        +--------------------+
++------------------+
+
++------------------+    +------------------+    +------------------+
+|   Preprocessor   |    | SourceValidator  |    |  PhraseIndexer   |
++------------------+    +------------------+    +------------------+
+| tokenize()       |    | validate_source()|    | insert_phrase()  |
+| normalize_token()|    | load_from_csv()  |    | find_in_text()   |
+| remove_stop_words|    | add_*_source()   |    | find_by_prefix() |
++------------------+    +------------------+    +------------------+
+
++------------------+    +------------------+    +------------------+
+|  StringMatcher   |    | FrequencyAnalyzer|    | TemporalAnalyzer |
++------------------+    +------------------+    +------------------+
+| kmp_search()     |    | analyze()        |    | add_entry()      |
+| build_lps_array()|    | get_suspicion()  |    | get_spike_score()|
+| rabin_karp_*()   |    | get_top_negative |    | get_spikes()     |
++------------------+    +------------------+    +------------------+
+
++------------------+    +------------------+    +------------------+
+|   GreedyFilter   |    |  ScoringEngine   |    |    ThreadPool    |
++------------------+    +------------------+    +------------------+
+| detect_patterns()|    | assess_article() |    | enqueue()        |
+| analyze_article()|    | assess_batch()   |    | wait_for_all()   |
+| calc_score()     |    | set_weights()    |    | shutdown()       |
++------------------+    +------------------+    +------------------+
+
+ScoringEngine -> uses {Preprocessor, SourceValidator, PhraseIndexer,
+StringMatcher, FrequencyAnalyzer, TemporalAnalyzer, GreedyFilter}
