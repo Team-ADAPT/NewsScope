@@ -1,0 +1,326 @@
+source,status,credibility
+abc australia,trusted,90
+abc news,trusted,87
+agencia efe spanish,trusted,88
+al jazeera english,trusted,89
+allafrica.com,trusted,78
+asia times english,trusted,80
+associated press,trusted,97
+austrian orf,trusted,87
+axios,trusted,84
+bangkok post,trusted,79
+bbc news,trusted,94
+belgian rtbf,trusted,85
+bloomberg,trusted,92
+business standard india,trusted,83
+caravan magazine india,trusted,80
+cbs news,trusted,87
+chicago tribune,trusted,85
+clarin argentina,trusted,79
+cnn,trusted,80
+colombo telegraph,trusted,75
+corriere della sera,trusted,87
+czech radio,trusted,82
+daily maverick south africa,trusted,86
+daily nation kenya,trusted,79
+danish dr news,trusted,89
+dawn pakistan,trusted,80
+denver post,trusted,83
+der spiegel,trusted,90
+deutsche welle,trusted,90
+down to earth india,trusted,85
+economic times india,trusted,82
+el comercio peru,trusted,80
+el espectador colombia,trusted,82
+el pais,trusted,89
+el universal mexico,trusted,83
+ethiopia insight,trusted,77
+euronews,trusted,80
+financial times,trusted,93
+folha de sao paulo,trusted,87
+foreign affairs,trusted,91
+france 24,trusted,88
+frankfurter allgemeine zeitung,trusted,89
+frontline magazine india,trusted,84
+ghana web,trusted,72
+hindustan times,trusted,84
+infobae,trusted,76
+international herald tribune,trusted,85
+japan times,trusted,84
+korea herald,trusted,82
+la nacion argentina,trusted,84
+la tercera chile,trusted,81
+le monde,trusted,91
+los angeles times,trusted,88
+mail and guardian south africa,trusted,84
+miami herald,trusted,84
+middle east eye,trusted,78
+minneapolis star tribune,trusted,84
+mint newspaper,trusted,84
+national review,trusted,74
+nature news,trusted,95
+nbc news,trusted,86
+ndtv,trusted,78
+netherlands public broadcasting nos,trusted,89
+new zealand herald,trusted,85
+news24 south africa,trusted,80
+newsweek international,trusted,83
+nexofin latam,trusted,72
+nikkei asia,trusted,88
+norwegian broadcasting nrk,trusted,90
+npr news,trusted,91
+o globo brazil,trusted,84
+pbs newshour,trusted,92
+philippine daily inquirer,trusted,78
+polish tvn24,trusted,80
+politico,trusted,83
+politico europe,trusted,84
+premium times nigeria,trusted,80
+propublica,trusted,93
+radio new zealand,trusted,88
+reuters,trusted,96
+science news,trusted,94
+scientific american,trusted,93
+scroll india,trusted,80
+seattle times,trusted,85
+slate,trusted,77
+south china morning post,trusted,80
+st. louis post-dispatch,trusted,82
+swedish public radio svt,trusted,89
+swiss rts,trusted,88
+texas tribune,trusted,87
+the atlantic,trusted,87
+the baltimore sun,trusted,81
+the boston globe,trusted,87
+the daily star bangladesh,trusted,77
+the east african,trusted,82
+the economist,trusted,92
+the guardian,trusted,91
+the hill,trusted,80
+the hindu,trusted,88
+the independent uk,trusted,82
+the indian express,trusted,87
+the intercept,trusted,76
+the irish times,trusted,88
+the jakarta post,trusted,79
+the nation,trusted,75
+the nation nigeria,trusted,76
+the new york times,trusted,92
+the print india,trusted,80
+the straits times,trusted,86
+the sydney morning herald,trusted,87
+the telegraph uk,trusted,83
+the washington post,trusted,91
+the weekly standard,trusted,73
+the wire india,trusted,79
+time magazine,trusted,86
+times of india,trusted,80
+univision noticias,trusted,77
+usa today,trusted,82
+vox,trusted,79
+wall street journal,trusted,90
+yle finland,trusted,88
+addis standard ethiopia,neutral,62
+animal politico mexico,neutral,66
+arab news english,neutral,59
+asean today,neutral,58
+balkan insight,neutral,67
+business day nigeria,neutral,60
+business insider,neutral,64
+buzzfeed news,neutral,62
+calvert journal eastern europe,neutral,62
+cameroon tribune english,neutral,55
+canadaland,neutral,62
+coconuts media,neutral,60
+columbia journalism review,neutral,70
+confidencial nicaragua,neutral,63
+connectas investigative latam,neutral,67
+crikey australia,neutral,63
+cross-border journalism review,neutral,60
+dainik jagran english,neutral,58
+deadline hollywood,neutral,57
+despacho 505 nicaragua,neutral,61
+devex international development,neutral,66
+el faro central america,neutral,66
+euractiv,neutral,65
+face2face africa,neutral,58
+fair media criticism us,neutral,56
+feedly aggregated,neutral,56
+firstpost india,neutral,61
+flipboard,neutral,55
+gato pardo magazine latam,neutral,60
+gizmodo,neutral,58
+google news aggregator,neutral,60
+haaretz english,neutral,66
+huffpost,neutral,61
+india today,neutral,64
+la silla vacia colombia,neutral,65
+mashable tech,neutral,59
+media lens uk,neutral,54
+mediaite,neutral,54
+meduza russia coverage,neutral,64
+middle east monitor,neutral,60
+mongabay environment apac,neutral,67
+mother jones,neutral,65
+msn news,neutral,57
+newslaundry,neutral,66
+nieman lab journalism,neutral,69
+nikkei asian review aggregated,neutral,65
+nodal americas aggregator,neutral,55
+opindia,neutral,45
+outlook india,neutral,63
+ozy media,neutral,52
+poynter media criticism,neutral,68
+pulitzer center africa reporting,neutral,65
+quartz africa,neutral,62
+quartz qz,neutral,65
+rabble canada,neutral,55
+rappler philippines,neutral,64
+realclearpolitics,neutral,53
+reason magazine,neutral,64
+rest of world,neutral,67
+rio on watch brazil,neutral,62
+scoopwhoop india,neutral,53
+sea globe southeast asia,neutral,60
+spectator uk,neutral,60
+swarajya magazine,neutral,55
+taiwan news english,neutral,62
+telesur english,neutral,50
+the africa report,neutral,63
+the continent africa,neutral,61
+the conversation global,neutral,68
+the daily beast,neutral,60
+the diplomat apac,neutral,69
+the federalist,neutral,55
+the irrawaddy myanmar,neutral,63
+the local europe,neutral,62
+the logical indian,neutral,60
+the quint india,neutral,62
+the tyee canada,neutral,64
+the wrap entertainment,neutral,56
+turkey purge tracker,neutral,55
+ventures africa,neutral,59
+vice news,neutral,63
+vietnam express international,neutral,60
+wired magazine,neutral,70
+yahoo news,neutral,58
+zimbabwe independent,neutral,58
+abcnews.com.co,untrusted,4
+activistpost unofficial,untrusted,16
+africawatchdogfake.net,untrusted,9
+allnewspipeline unofficial,untrusted,11
+americanpatriot.daily,untrusted,11
+argentinanoticias unofficial,untrusted,14
+auntyacid clone,untrusted,14
+australiadailyscoop unofficial,untrusted,17
+awm.com unofficial,untrusted,16
+beforeitsnews.com,untrusted,5
+cbsnews.today unofficial,untrusted,5
+chinatodaydailyrumor.com,untrusted,8
+collective-evolution.net,untrusted,18
+conservativedailypost.com,untrusted,16
+constitutionrising.com,untrusted,14
+davidwolfe unofficial,untrusted,10
+deepstatedaily.net,untrusted,9
+disclosurenews.it,untrusted,10
+empirenews.net,untrusted,6
+endoftheamericandream.net,untrusted,12
+euinfowars.net,untrusted,8
+expreso-mx-noticias.net,untrusted,12
+fakestreampress.com,untrusted,11
+freedomeagle.net,untrusted,15
+gaia.com headlines,untrusted,18
+globalresearch.ca mirror,untrusted,22
+greeknewsondemand unofficial,untrusted,15
+higher-perspective.net,untrusted,19
+india24hoursrumor.net,untrusted,9
+indiafacts unofficial,untrusted,16
+infobras.com.br unofficial,untrusted,15
+infowarsclone.net,untrusted,4
+kenyarumornews.com,untrusted,10
+koreafreepress unofficial,untrusted,16
+kreately unofficial,untrusted,12
+leftycrusher.net,untrusted,10
+libertywriters.com,untrusted,18
+msnbcfail.com,untrusted,7
+myanmarrumors.net,untrusted,10
+nationaldastak unofficial,untrusted,15
+naturalnewsalerts.net,untrusted,6
+neonnettle.com,untrusted,8
+nigeriabreakingscoop.net,untrusted,11
+noticias24venezuela unofficial,untrusted,18
+patriotnewsalerts.com,untrusted,12
+pawmygosh.net,untrusted,18
+pgurus.com,untrusted,18
+philippinesfreenews.net,untrusted,14
+postcard.news,untrusted,8
+prepperwebsite.net,untrusted,13
+reaganwasright.com,untrusted,13
+redstatewatcher.com,untrusted,14
+renegadetribune.com,untrusted,10
+rightwingindianews.com,untrusted,10
+sg news today unofficial,untrusted,20
+shareably.net unofficial,untrusted,17
+southafricaunfiltered.net,untrusted,14
+southfrontanalysis unofficial,untrusted,22
+survivaldaily.net,untrusted,14
+tanzaniainsidernews.net,untrusted,9
+thedcgazette.com,untrusted,19
+theeventchronicle.com,untrusted,9
+themindsjournal unofficial,untrusted,20
+thenewsminute unofficial copy,untrusted,22
+thenewyorktimesreport.com,untrusted,6
+thepoliticalinsider.com,untrusted,20
+thetruthseeker.co.uk unofficial,untrusted,12
+trumptrainnews.com,untrusted,8
+truthuncensored.net,untrusted,10
+ugandaexposerumor.com,untrusted,8
+ukcolumn unofficial,untrusted,20
+urgente24colombia unofficial,untrusted,16
+usapolitics.today,untrusted,17
+usatoday24.net unofficial,untrusted,7
+verdad-urgente.com,untrusted,10
+verdadoculta.net,untrusted,8
+viralnova clone,untrusted,14
+viralnovus.com,untrusted,15
+voiceofeurope unofficial,untrusted,16
+wakingtimes.net,untrusted,15
+worldnewsdailyreport.com,untrusted,5
+zerohedge unofficial,untrusted,20
+cosmicdisclosure.biz,untrusted,8
+emftruthnetwork.com,untrusted,10
+fake news daily,untrusted,15
+globaleliteexposed.com,untrusted,9
+hiddenagenda.news,untrusted,10
+infowarsecho.net,untrusted,6
+redpilldaily.org,untrusted,8
+uncensoredtruth247.com,untrusted,7
+bbc,trusted,94
+cbc news,trusted,86
+reuters world,trusted,96
+reuters.com,trusted,96
+ap,trusted,96
+ap news,trusted,96
+apnews,trusted,96
+wall street journal wsj,trusted,90
+wsj,trusted,90
+new york times nyt,trusted,92
+nyt,trusted,92
+al jazeera,trusted,89
+the hindu india,trusted,88
+bbc.co.uk,trusted,94
+bbc.com,trusted,94
+npr,trusted,91
+aeon magazine,neutral,65
+citylab,neutral,66
+education week,trusted,82
+harvard business review,trusted,88
+health affairs,trusted,89
+modern farmer,neutral,66
+nature ethics,trusted,92
+nature journal,trusted,95
+science magazine,trusted,95
+science,trusted,95
+the conversation,trusted,74
+the marshall project,trusted,88
+undark magazine,trusted,84

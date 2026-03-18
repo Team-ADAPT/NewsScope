@@ -1,0 +1,92 @@
+#ifndef NEWSSCOPE_SCORING_ENGINE_H
+#define NEWSSCOPE_SCORING_ENGINE_H
+
+#include "types.h"
+#include "preprocessing.h"
+#include "source_validator.h"
+#include "phrase_indexer.h"
+#include "string_matcher.h"
+#include "frequency_analyzer.h"
+#include "temporal_analyzer.h"
+#include "greedy_filter.h"
+#include "claim_verifier.h"
+#include <memory>
+#include <chrono>
+#include <mutex>
+
+namespace newsscope {
+
+class ScoringEngine {
+public:
+    ScoringEngine();
+    
+    void initialize(const std::string& sources_csv = "",
+                   const std::string& suspicious_phrases_file = "",
+                   const std::string& negative_terms_file = "");
+    
+    CredibilityResult assess_article(const Article& article);
+    std::vector<CredibilityResult> assess_batch(const std::vector<Article>& articles);
+    
+    void set_module_weights(double preprocessing_weight, double source_weight,
+                           double phrase_weight, double kmp_weight,
+                           double rabin_karp_weight, double frequency_weight,
+                           double temporal_weight, double greedy_weight);
+    
+    std::unordered_map<std::string, double> get_module_scores() const;
+    std::vector<std::string> get_explanations() const;
+    void reset();
+    
+    Preprocessor& get_preprocessor() { return *preprocessor; }
+    SourceValidator& get_source_validator() { return *source_validator; }
+    PhraseIndexer& get_phrase_indexer() { return *phrase_indexer; }
+    FrequencyAnalyzer& get_frequency_analyzer() { return *frequency_analyzer; }
+    TemporalAnalyzer& get_temporal_analyzer() { return *temporal_analyzer; }
+    GreedyFilter& get_greedy_filter() { return *greedy_filter; }
+    ClaimVerifier& get_claim_verifier() { return *claim_verifier; }
+    
+private:
+    std::unique_ptr<Preprocessor> preprocessor;
+    std::unique_ptr<SourceValidator> source_validator;
+    std::unique_ptr<PhraseIndexer> phrase_indexer;
+    std::unique_ptr<FrequencyAnalyzer> frequency_analyzer;
+    std::unique_ptr<TemporalAnalyzer> temporal_analyzer;
+    std::unique_ptr<GreedyFilter> greedy_filter;
+    std::unique_ptr<ClaimVerifier> claim_verifier;
+    
+    struct ModuleScores {
+        double preprocessing_score = 50.0;
+        double source_score = 50.0;
+        double phrase_score = 50.0;
+        double kmp_score = 50.0;
+        double rabin_karp_score = 50.0;
+        double frequency_score = 50.0;
+        double temporal_score = 50.0;
+        double greedy_score = 50.0;
+        double claim_verifiability_score = 50.0;
+    } module_scores;
+    
+    static constexpr double DEFAULT_MODULE_WEIGHT = 12.5;  // 100 / 8 modules
+    
+    struct Weights {
+        double preprocessing = DEFAULT_MODULE_WEIGHT;
+        double source = DEFAULT_MODULE_WEIGHT;
+        double phrase = DEFAULT_MODULE_WEIGHT;
+        double kmp = DEFAULT_MODULE_WEIGHT;
+        double rabin_karp = DEFAULT_MODULE_WEIGHT;
+        double frequency = DEFAULT_MODULE_WEIGHT;
+        double temporal = DEFAULT_MODULE_WEIGHT;
+        double greedy = DEFAULT_MODULE_WEIGHT;
+    } weights;
+    
+    std::vector<std::string> explanations;
+    mutable std::recursive_mutex assess_mutex;
+    bool initialized_resources = false;
+    
+    double calculate_combined_score();
+    void clear_explanations();
+    void add_explanation(const std::string& module_name, double score, const std::string& reason);
+};
+
+}
+
+#endif
