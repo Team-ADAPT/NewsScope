@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NewsScope | Fake vs Original Checker</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <h1>NewsScope</h1>
+        <p>
+          Professional credibility screening for news-like text. Submit a text sample,
+          and NewsScope analyzes it in the background before returning a score and verdict.
+        </p>
+      </header>
+
+      <main class="card">
+        <form id="analyze-form">
+          <label for="text-input">Text to analyze</label>
+          <textarea
+            id="text-input"
+            name="text"
+            placeholder="Paste the article/body text here..."
+            required
+          ></textarea>
+
+          <div class="row">
+            <div class="field">
+              <label for="source-input">Source (optional)</label>
+              <input id="source-input" name="source" type="text" placeholder="e.g., Reuters" />
+            </div>
+            <div class="actions">
+              <button id="submit-btn" type="submit">Analyze in Background</button>
+            </div>
+          </div>
+        </form>
+
+        <section id="status-box" class="status hidden"></section>
+
+        <section id="result-box" class="result hidden">
+          <div class="result-top">
+            <div>
+              <h2 id="result-label">Result</h2>
+              <p id="result-score"></p>
+            </div>
+            <span id="result-badge" class="badge">Pending</span>
+          </div>
+
+          <p id="result-meta"></p>
+
+          <h3>Module Breakdown</h3>
+          <ul id="module-scores" class="module-list"></ul>
+
+          <h3>Explanation</h3>
+          <ul id="explanations" class="explain-list"></ul>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
