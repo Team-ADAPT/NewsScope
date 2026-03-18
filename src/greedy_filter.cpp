@@ -35,80 +35,58 @@ bool GreedyFilter::detect_excessive_question(const std::string& text) {
 }
 
 bool GreedyFilter::detect_sensational_words(const std::string& text) {
-    auto sensational = get_sensational_words();
-    
+    static const std::vector<std::string> sensational = {
+        "unprecedented", "unbelievable", "shocking", "astonishing",
+        "incredible", "amazing", "stunning", "astounding",
+        "bombshell", "explosive", "sensational", "jaw-dropping",
+        "mind-blowing"
+    };
     for (const auto& word : sensational) {
-        if (contains_word(text, word)) {
+        if (text.find(word) != std::string::npos) {
             return true;
         }
     }
-    
     return false;
 }
 
 bool GreedyFilter::detect_clickbait_structure(const std::string& text) {
-    std::vector<std::string> clickbait_patterns = {
-        "you won't believe",
-        "this one trick",
-        "doctors hate",
-        "click here",
-        "see what",
-        "find out",
-        "what happens next",
-        "you won't",
-        "shocking truth"
+    static const std::vector<std::string> clickbait_patterns = {
+        "you won't believe", "this one trick", "doctors hate", "click here",
+        "see what", "find out", "what happens next", "you won't", "shocking truth"
     };
-    
-    std::string lower_text = text;
-    std::transform(lower_text.begin(), lower_text.end(), lower_text.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    
     for (const auto& pattern : clickbait_patterns) {
-        if (lower_text.find(pattern) != std::string::npos) {
+        if (text.find(pattern) != std::string::npos) {
             return true;
         }
     }
-    
     return false;
 }
 
 bool GreedyFilter::detect_urgency_tactics(const std::string& text) {
-    std::vector<std::string> urgency_words = {
-        "immediate", "urgent", "now", "today", "limited time",
-        "hurry", "quickly", "don't wait", "act now", "last chance"
+    static const std::vector<std::string> urgency_words = {
+        "immediate", "urgent", "limited time",
+        "hurry", "don't wait", "act now", "last chance"
     };
-    
-    std::string lower_text = text;
-    std::transform(lower_text.begin(), lower_text.end(), lower_text.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    
     int urgency_count = 0;
     for (const auto& word : urgency_words) {
-        if (lower_text.find(word) != std::string::npos) {
+        if (text.find(word) != std::string::npos) {
             urgency_count++;
         }
     }
-    
     return urgency_count >= 2;
 }
 
 bool GreedyFilter::detect_emotional_manipulation(const std::string& text) {
-    std::vector<std::string> emotional_words = {
+    static const std::vector<std::string> emotional_words = {
         "disgusting", "outrageous", "horrified", "enraged", "heartbroken",
         "devastated", "shocked", "appalled", "furious", "sickening"
     };
-    
-    std::string lower_text = text;
-    std::transform(lower_text.begin(), lower_text.end(), lower_text.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    
     int emotional_count = 0;
     for (const auto& word : emotional_words) {
-        if (lower_text.find(word) != std::string::npos) {
+        if (text.find(word) != std::string::npos) {
             emotional_count++;
         }
     }
-    
     return emotional_count >= 2;
 }
 
@@ -137,38 +115,42 @@ std::vector<std::string> GreedyFilter::get_sensational_words() const {
         "unprecedented", "unbelievable", "shocking", "astonishing",
         "incredible", "amazing", "stunning", "astounding",
         "bombshell", "explosive", "sensational", "jaw-dropping",
-        "mind-blowing", "absolutely", "never", "ever"
+        "mind-blowing"
     };
 }
 
 std::vector<GreedySignal> GreedyFilter::detect_patterns(const std::string& headline) {
     detected_signals.clear();
-    
+
+    std::string lower = headline;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
     if (detect_all_caps(headline)) {
         detected_signals.push_back({"ALL_CAPS", 0.8});
     }
     
-    if (detect_excessive_exclamation(headline)) {
+    if (detect_excessive_exclamation(lower)) {
         detected_signals.push_back({"EXCESSIVE_EXCLAMATION", 0.7});
     }
     
-    if (detect_excessive_question(headline)) {
+    if (detect_excessive_question(lower)) {
         detected_signals.push_back({"EXCESSIVE_QUESTION", 0.6});
     }
     
-    if (detect_sensational_words(headline)) {
+    if (detect_sensational_words(lower)) {
         detected_signals.push_back({"SENSATIONAL_WORDS", 0.75});
     }
     
-    if (detect_clickbait_structure(headline)) {
+    if (detect_clickbait_structure(lower)) {
         detected_signals.push_back({"CLICKBAIT_STRUCTURE", 0.85});
     }
     
-    if (detect_urgency_tactics(headline)) {
+    if (detect_urgency_tactics(lower)) {
         detected_signals.push_back({"URGENCY_TACTICS", 0.7});
     }
     
-    if (detect_emotional_manipulation(headline)) {
+    if (detect_emotional_manipulation(lower)) {
         detected_signals.push_back({"EMOTIONAL_MANIPULATION", 0.75});
     }
 
@@ -209,23 +191,52 @@ double GreedyFilter::calculate_manipulation_score(const std::vector<GreedySignal
         count++;
     }
     
-    return std::min(100.0, total_score);
+    return std::max(0.0, std::min(100.0, total_score));
 }
 
 double GreedyFilter::analyze_article(const std::string& headline, const std::string& body) {
-    auto headline_signals = detect_patterns(headline);
-    auto body_signals = detect_patterns(body);
+    // Lowercase once per string, reuse across all detectors
+    std::string lower_headline = headline;
+    std::transform(lower_headline.begin(), lower_headline.end(), lower_headline.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    std::string lower_body = body;
+    std::transform(lower_body.begin(), lower_body.end(), lower_body.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
 
-    for (auto& signal : headline_signals) {
-        signal.severity = std::min(1.0, signal.severity * 1.5);
+    // detect_all_caps needs original casing; other detectors use lowercased text
+    detected_signals.clear();
+
+    if (detect_all_caps(headline)) {
+        detected_signals.push_back({"ALL_CAPS", std::min(1.0, 0.8 * 1.5)});
+    }
+    auto push_if = [&](bool triggered, const std::string& name, double sev, double headline_mult) {
+        if (triggered) detected_signals.push_back({name, std::min(1.0, sev * headline_mult)});
+    };
+    push_if(detect_excessive_exclamation(lower_headline), "EXCESSIVE_EXCLAMATION", 0.7, 1.5);
+    push_if(detect_excessive_question(lower_headline),    "EXCESSIVE_QUESTION",    0.6, 1.5);
+    push_if(detect_sensational_words(lower_headline),     "SENSATIONAL_WORDS",     0.75, 1.5);
+    push_if(detect_clickbait_structure(lower_headline),   "CLICKBAIT_STRUCTURE",   0.85, 1.5);
+    push_if(detect_urgency_tactics(lower_headline),       "URGENCY_TACTICS",       0.7, 1.5);
+    push_if(detect_emotional_manipulation(lower_headline),"EMOTIONAL_MANIPULATION",0.75, 1.5);
+
+    if (detect_all_caps(body)) {
+        detected_signals.push_back({"ALL_CAPS", 0.8});
+    }
+    push_if(detect_excessive_exclamation(lower_body), "EXCESSIVE_EXCLAMATION", 0.7, 1.0);
+    push_if(detect_excessive_question(lower_body),    "EXCESSIVE_QUESTION",    0.6, 1.0);
+    push_if(detect_sensational_words(lower_body),     "SENSATIONAL_WORDS",     0.75, 1.0);
+    push_if(detect_clickbait_structure(lower_body),   "CLICKBAIT_STRUCTURE",   0.85, 1.0);
+    push_if(detect_urgency_tactics(lower_body),       "URGENCY_TACTICS",       0.7, 1.0);
+    push_if(detect_emotional_manipulation(lower_body),"EMOTIONAL_MANIPULATION",0.75, 1.0);
+
+    for (const auto& rule : custom_rules) {
+        const auto& name     = std::get<0>(rule);
+        const auto& detector = std::get<1>(rule);
+        double severity      = std::get<2>(rule);
+        if (detector(lower_headline)) detected_signals.push_back({name, std::min(1.0, severity * 1.5)});
+        else if (detector(lower_body)) detected_signals.push_back({name, std::max(0.0, std::min(1.0, severity))});
     }
 
-    std::vector<GreedySignal> all_signals;
-    all_signals.reserve(headline_signals.size() + body_signals.size());
-    all_signals.insert(all_signals.end(), headline_signals.begin(), headline_signals.end());
-    all_signals.insert(all_signals.end(), body_signals.begin(), body_signals.end());
-
-    detected_signals = all_signals;
     return calculate_manipulation_score(detected_signals);
 }
 
