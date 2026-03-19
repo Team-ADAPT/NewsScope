@@ -3,58 +3,159 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>NewsScope | Fake vs Original Checker</title>
+    <title>NewsScope | News Credibility Checker</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
     <div class="page">
       <header class="hero">
-        <h1>NewsScope</h1>
-        <p>
-          Professional credibility screening for news-like text. Submit a text sample,
-          and NewsScope analyzes it in the background before returning a score and verdict.
-        </p>
+        <div class="hero-copy">
+          <p class="eyebrow">Deterministic Credibility Review</p>
+          <h1>Inspect a story like a newsroom risk desk.</h1>
+          <p class="hero-text">
+            NewsScope breaks each submission into source trust, claim support, suspicious language,
+            and manipulation signals so the verdict feels explainable instead of magical.
+          </p>
+
+          <div class="hero-metrics" aria-label="Product highlights">
+            <div class="metric-card">
+              <span class="metric-value">9</span>
+              <span class="metric-label">Scoring modules</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-value">177</span>
+              <span class="metric-label">Reference articles</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-value">Fast</span>
+              <span class="metric-label">Background analysis</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hero-aside">
+          <div class="hero-note">
+            <span class="hero-note-label">What it surfaces</span>
+            <ul class="hero-list">
+              <li>Source credibility and known outlet coverage</li>
+              <li>Claim grounding versus vague or promotional language</li>
+              <li>Clickbait, manipulation, and suspicious phrasing</li>
+            </ul>
+          </div>
+        </div>
       </header>
 
-      <main class="card">
-        <form id="analyze-form">
-          <label for="text-input">Text to analyze</label>
-          <textarea
-            id="text-input"
-            name="text"
-            placeholder="Paste the article/body text here..."
-            required
-          ></textarea>
-
-          <div class="row">
-            <div class="field">
-              <label for="source-input">Source (optional)</label>
-              <input id="source-input" name="source" type="text" placeholder="e.g., Reuters" />
-            </div>
-            <div class="actions">
-              <button id="submit-btn" type="submit">Analyze in Background</button>
-            </div>
-          </div>
-        </form>
-
-        <section id="status-box" class="status hidden"></section>
-
-        <section id="result-box" class="result hidden">
-          <div class="result-top">
+      <main class="workspace" role="main">
+        <section class="panel composer-panel">
+          <div class="panel-head">
             <div>
-              <h2 id="result-label">Result</h2>
-              <p id="result-score"></p>
+              <p class="panel-kicker">Input</p>
+              <h2>Submit article text</h2>
             </div>
-            <span id="result-badge" class="badge">Pending</span>
+            <span class="panel-pill">Ctrl + Enter</span>
           </div>
 
-          <p id="result-meta"></p>
+          <form id="analyze-form" aria-label="News analysis form">
+            <label for="text-input">Headline and body</label>
+            <textarea
+              id="text-input"
+              name="text"
+              placeholder="Paste the headline on the first line, then the body text below."
+              required
+              aria-describedby="text-hint"
+            ></textarea>
+            <small id="text-hint" class="hint">The first line is treated as the headline. Everything below it becomes the body.</small>
 
-          <h3>Module Breakdown</h3>
-          <ul id="module-scores" class="module-list"></ul>
+            <div class="input-grid">
+              <div class="field">
+                <label for="source-input">Source <span class="optional">(optional)</span></label>
+                <input
+                  id="source-input"
+                  name="source"
+                  type="text"
+                  placeholder="Reuters, BBC News, Bloomberg, local outlet, etc."
+                  aria-describedby="source-hint"
+                />
+                <small id="source-hint" class="hint">Known outlets improve source calibration. Unknown sources stay neutral.</small>
+              </div>
 
-          <h3>Explanation</h3>
-          <ul id="explanations" class="explain-list"></ul>
+              <div class="actions">
+                <button id="submit-btn" type="submit" aria-live="polite">
+                  <span class="btn-icon" aria-hidden="true">Analyze</span>
+                </button>
+              </div>
+            </div>
+            <small class="keyboard-hint">Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to submit instantly.</small>
+          </form>
+
+          <div class="sample-strip" aria-label="Usage guidance">
+            <div class="sample-card">
+              <span class="sample-label">Best input</span>
+              <p>Use a full headline plus at least a few sentences of body text.</p>
+            </div>
+            <div class="sample-card">
+              <span class="sample-label">Best source field</span>
+              <p>Use the publication name or domain if you know it.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel output-panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Output</p>
+              <h2>Credibility signal</h2>
+            </div>
+          </div>
+
+          <section id="status-box" class="status hidden" role="status" aria-live="polite"></section>
+
+          <section id="result-box" class="result hidden" aria-label="Analysis results">
+            <div class="result-hero">
+              <div class="score-display">
+                <div class="score-circle" id="score-circle">
+                  <svg viewBox="0 0 120 120" class="score-ring">
+                    <circle cx="60" cy="60" r="54" class="score-ring-bg" />
+                    <circle cx="60" cy="60" r="54" class="score-ring-fill" id="score-ring-fill" />
+                  </svg>
+                  <div class="score-value">
+                    <span id="score-number">0</span>
+                    <small>/100</small>
+                  </div>
+                </div>
+              </div>
+
+              <div class="verdict-section">
+                <span id="result-badge" class="badge">Pending</span>
+                <p id="result-label" class="verdict-label"></p>
+                <p id="result-meta" class="meta-info"></p>
+              </div>
+            </div>
+
+            <div id="result-insights" class="insight-row" aria-label="Top credibility signals"></div>
+
+            <details class="modules-section" open>
+              <summary><h3>Module Breakdown</h3></summary>
+              <div id="module-scores" class="module-grid"></div>
+            </details>
+
+            <details class="explanation-section">
+              <summary><h3>Detailed Explanation</h3></summary>
+              <ul id="explanations" class="explain-list" role="list"></ul>
+            </details>
+          </section>
+
+          <section id="empty-state" class="empty-state" aria-label="Waiting for analysis">
+            <p class="empty-kicker">Ready</p>
+            <h3>Paste a story to generate a credibility readout.</h3>
+            <p>
+              You will see the overall score, the final verdict, and a per-module breakdown showing
+              which parts of the article increased or reduced trust.
+            </p>
+          </section>
         </section>
       </main>
     </div>
