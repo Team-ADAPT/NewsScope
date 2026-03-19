@@ -392,9 +392,9 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     
     // Suspicious patterns detected — penalize regardless of source if signals are strong
     if ((kmp_matches >= 2 || greedy_manipulation > MANIPULATION_THRESHOLD || freq_suspicion > SUSPICION_THRESHOLD)) {
-        const double pattern_penalty = local_scores.source_score < MEDIUM_SOURCE_CREDIBILITY_THRESHOLD
-            ? RISK_PENALTY_SUSPICIOUS_PATTERNS
-            : RISK_PENALTY_SUSPICIOUS_PATTERNS * 0.6;  // trusted sources get partial relief
+        const double pattern_penalty = local_scores.source_score >= HIGH_SOURCE_THRESHOLD
+            ? RISK_PENALTY_SUSPICIOUS_PATTERNS * 0.6  // genuinely trusted sources get partial relief
+            : RISK_PENALTY_SUSPICIOUS_PATTERNS;
         risk_penalty += pattern_penalty;
     }
     
