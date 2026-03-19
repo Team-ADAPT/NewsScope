@@ -2,364 +2,252 @@
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
+![Interface](https://img.shields.io/badge/interface-web%20%2B%20cli-c4672f.svg)
 
-A deterministic, high-performance news credibility assessment engine written in C++17. NewsScope evaluates articles through a pipeline of independent algorithmic modules — no machine learning — and returns a scored, fully explainable credibility result per article.
+NewsScope is a deterministic credibility analysis engine for news text, built in C++17.
 
-```
-NewsScope: Scalable News Credibility Assessment System
+It evaluates article input using transparent scoring modules for source trust, claim grounding, suspicious phrasing, manipulation patterns, and supporting context, then returns a score with explanations instead of a black-box verdict.
 
-Article: article_1
-Overall Credibility Score: 82.50/100
+## At a Glance
 
-Module Scores:
-  source_validation         : 95.00/100
-  frequency_analysis        : 78.00/100
-  greedy_filter             : 80.00/100
-  ...
+- deterministic, explainable scoring
+- native C++ engine with local web interface
+- source, language, and claim-based analysis in one pipeline
+- benchmarked and test-covered
+- no ML model dependency
 
-Processing Time: 0 ms
-```
+## Why It Exists
 
----
+Most fake-news detectors either behave like opaque classifiers or collapse everything into one confidence number. NewsScope takes the opposite approach:
 
-## Table of Contents
+- every major signal is visible
+- every module can be tested independently
+- the result can be explained in plain language
+- the same input produces the same output every time
 
-- [Overview](#overview)
-- [Modules](#modules)
-- [Architecture](#architecture)
-- [Scoring](#scoring)
-- [Getting Started](#getting-started)
-- [Usage](#usage)
-- [Benchmarks](#benchmarks)
-- [Project Structure](#project-structure)
-- [Documentation](#documentation)
+This makes it more suitable for demos, academic work, local tooling, and systems where reproducibility matters.
 
----
+## Core Pipeline
 
-## Overview
+NewsScope combines multiple modules, each responsible for one kind of signal:
 
-NewsScope is built for use cases where **explainability**, **determinism**, and **performance** are non-negotiable. Each article passes through a pipeline of independent modules. Every module contributes a numeric score and a human-readable explanation. The final score is a configurable weighted average across all modules.
+| Module | Purpose |
+|---|---|
+| `Preprocessing` | normalize and tokenize article text |
+| `Source Validation` | score known publishers from a source credibility map |
+| `Phrase Indexing` | detect suspicious phrases through a trie |
+| `KMP Matching` | perform deterministic string-pattern checks |
+| `Rabin-Karp` | run efficient multi-pattern matching |
+| `Frequency Analysis` | score weighted suspicious terms and phrases |
+| `Temporal Analysis` | detect unusual activity spikes |
+| `Greedy Filter` | flag clickbait and manipulation-heavy language |
+| `Claim Verifier` | estimate how grounded and attributable the claims are |
+| `Scoring Engine` | calibrate the final credibility score |
 
-**Key properties:**
+## Output
 
-- Pure algorithmic scoring — no model training, no external ML dependencies
-- Modular architecture with clean, independently testable interfaces
-- Concurrent batch processing via a custom thread pool
-- Full benchmark suite covering throughput, latency, and memory usage
-- **Production-ready dataset**: 177 validated articles across diverse topics and sources
-- **Enhanced detection**: 708-term negative keyword dictionary with conspiracy/clickbait patterns
-- Builds with a single `make` command — no package manager required
+Each run returns:
 
----
+- overall credibility score
+- module-level scores
+- explanation lines
+- processing time
 
-## Modules
+Typical interpretation:
 
-| Module | Algorithm | Time Complexity | Role |
-|---|---|---|---|
-| Preprocessing | Tokenization + normalization + stop-word removal | `O(n)` | Text cleanup pipeline |
-| Source Validation | `unordered_map` lookup | `O(1)` avg | Trusted/untrusted source scoring |
-| Phrase Indexing | Trie | `O(m)` per insert/search | Suspicious phrase detection |
-| KMP Matcher | Prefix/LPS-based pattern matching | `O(n + m)` | Deterministic single-pattern match |
-| Rabin-Karp Matcher | Rolling hash | `O(n + m)` avg | Multi-pattern matching |
-| Frequency Analyzer | Hash-map term counting | `O(n)` | Suspicious term frequency scoring |
-| Temporal Analyzer | Sliding window (`deque`) | Amortized `O(1)` | Publish-rate spike detection |
-| Greedy Filter | Priority-driven signal selection | `O(k log k)` | Clickbait/manipulation prioritization |
-| Claim Verifier | Verifiability heuristics | `O(n)` | Evidence/attribution vs promotional narrative checks |
-| Scoring Engine | Weighted aggregation | `O(1)` | Combines all module outputs |
+| Score | Signal |
+|---|---|
+| `80-100` | strong credibility signal |
+| `60-79` | generally credible with some uncertainty |
+| `40-59` | mixed or weakly grounded |
+| `0-39` | high-risk or likely misleading |
 
-`n` = text length, `m` = pattern length, `k` = detected signal count.
+## Demo Experience
 
----
+### Web Interface
 
-## Architecture
+Start the local server:
 
-```
-Article(id, headline, body, source, timestamp)
-        │
-        ▼
-  Preprocessor
-        │
-        ├──▶ SourceValidator    (hash lookup)
-        ├──▶ PhraseIndexer      (trie scan)
-        ├──▶ StringMatcher      (KMP + Rabin-Karp)
-        ├──▶ FrequencyAnalyzer  (term frequency)
-        ├──▶ TemporalAnalyzer   (sliding window)
-        ├──▶ GreedyFilter       (signal prioritization)
-        └──▶ ClaimVerifier      (verifiability analysis)
-                    │
-                    ▼
-             ScoringEngine
-                    │
-                    ▼
-  CredibilityResult(overall_score, module_scores, explanations, processing_time)
+```bash
+make run-web
 ```
 
-`ScoringEngine` orchestrates all modules and exposes both single-article and batch assessment APIs. `ThreadPool` enables concurrent processing for high-throughput workloads using a task queue backed by condition variables and mutex-protected worker threads.
+Open:
 
----
+```text
+http://localhost:8080
+```
 
-## Scoring
+The web app supports:
 
-Eight core modules contribute equally by default (`12.5%` each).  
-`ClaimVerifier` is an additional calibration signal used to reduce polished-but-unverifiable narratives.
+- article text submission
+- optional source input
+- background analysis jobs
+- verdict plus score display
+- module-by-module breakdown
+- explanation cards for the detected signals
 
-Core weight configuration:
+### Native API
 
 ```cpp
-engine.set_module_weights(
-    preprocessing, source, phrase, kmp,
-    rabin_karp, frequency, temporal, greedy
+#include "scoring_engine.h"
+
+using namespace newsscope;
+
+ScoringEngine engine;
+engine.initialize();
+
+Article article(
+    "article-1",
+    "Central bank holds benchmark interest rate steady",
+    "In its official statement, the central bank said inflation has eased...",
+    "Reuters"
 );
+
+CredibilityResult result = engine.assess_article(article);
 ```
 
-Score interpretation:
+## Quick Start
 
-| Range | Credibility Level |
-|---|---|
-| 90 – 100 | **Very High** — trusted source, factual content |
-| 70 – 89 | **High** — generally reliable with minor concerns |
-| 50 – 69 | **Medium** — mixed signals, verify independently |
-| 30 – 49 | **Low** — multiple red flags detected |
-| 0 – 29 | **Very Low** — high likelihood of misinformation |
+### Requirements
 
----
+- `clang++` or `g++` with C++17 support
+- `make`
 
-## Getting Started
-
-**Prerequisites:** C++17 compiler (`clang++` or `g++`), `make`
+### Build
 
 ```bash
-# Clone the repository
-git clone https://github.com/<your-username>/NewsScope.git
+git clone https://github.com/Team-ADAPT/NewsScope.git
 cd NewsScope
-
-# Build everything (library + demo + tests + benchmarks)
 make all
-
-# Run the demo
-./build/newsscope_demo
-
-# Run the web portal (http://localhost:8080)
-make run-web
-
-# Run all unit tests
-make run-tests
-
-# Run all benchmarks
-make run-benchmarks
 ```
 
-`newsscope_demo` auto-loads `data/articles.json` when available (and falls back to built-in sample articles if the file is missing or invalid).
-
-Individual benchmark targets:
+### Common Commands
 
 ```bash
-make run-throughput   # Articles/sec throughput
-make run-latency      # P50/P99 latency distribution
-make run-memory       # Heap usage per batch size
+make run            # CLI demo
+make run-web        # web server
+make run-tests      # test suite
+make run-benchmarks # throughput, latency, memory
+make clean          # remove build artifacts
 ```
 
-CMake is also supported:
+### CMake
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-Clean build artifacts:
+## Repository Structure
+
+```text
+NewsScope/
+├── include/      public headers
+├── src/          scoring engine, modules, demo, web server
+├── tests/        unit and integration coverage
+├── benchmark/    performance benchmarks
+├── data/         source maps, weighted terms, phrase lists, article samples
+├── web/          browser UI assets
+└── docs/         architecture and supporting notes
+```
+
+## Data Assets
+
+The repository includes local data files used directly by the engine:
+
+- `data/articles.json`
+  sample and evaluation articles
+- `data/sources.csv`
+  source credibility data
+- `data/negative_terms.csv`
+  weighted suspicious terms and phrases
+- `data/suspicious_phrases.txt`
+  trie-loaded phrase patterns
+
+`ScoringEngine::initialize()` auto-loads these files when they are present in the standard project layout.
+
+## Testing
+
+Run the full suite:
 
 ```bash
-make clean
+make run-tests
 ```
 
----
+Coverage includes:
 
-## Usage
-
-### Web Portal (Fake vs Original checker)
-
-NewsScope includes a lightweight C++ web server and professional UI for background analysis.
-
-- Start server: `make run-web`
-- Open: `http://localhost:8080`
-- Submit text in the form
-- The request is queued and processed in background workers
-- UI polls job status and shows:
-  - verdict (`Likely Fake` / `Likely Original`)
-  - credibility score
-  - per-module breakdown
-  - explanation lines
-
-API endpoints:
-
-- `POST /api/jobs` with JSON: `{"text":"...","source":"..."}`
-- `GET /api/jobs/{job_id}` for status/result
-
-Job statuses: `queued`, `processing`, `done`, `failed`
-
----
-
-**Single article assessment:**
-
-```cpp
-#include "scoring_engine.h"
-using namespace newsscope;
-
-ScoringEngine engine;
-engine.initialize("data/sources.csv", "data/suspicious_phrases.txt", "data/negative_terms.csv");
-
-Article article(
-    "article-1",
-    "New Research Reveals Cancer Treatment Breakthrough",
-    "Researchers at Stanford University have announced a significant breakthrough...",
-    "Reuters"
-);
-
-CredibilityResult result = engine.assess_article(article);
-// result.overall_score    → 0–100
-// result.module_scores    → per-module score breakdown
-// result.explanations     → human-readable reasoning per module
-// result.processing_time  → end-to-end latency in ms
-```
-
-**Batch processing:**
-
-```cpp
-std::vector<Article> articles = { ... };
-std::vector<CredibilityResult> results = engine.assess_batch(articles);
-```
-
-**Concurrent processing with thread pool:**
-
-```cpp
-ThreadPool pool(std::thread::hardware_concurrency());
-
-for (const auto& article : articles) {
-    pool.enqueue([&engine, &article]() {
-        auto result = engine.assess_article(article);
-    });
-}
-
-pool.wait_for_all();
-```
-
-**Custom module weights:**
-
-```cpp
-// Emphasize source and frequency signals
-engine.set_module_weights(
-    5.0,   // preprocessing
-    25.0,  // source_validation
-    10.0,  // phrase_indexing
-    10.0,  // kmp
-    10.0,  // rabin_karp
-    20.0,  // frequency
-    10.0,  // temporal
-    10.0   // greedy
-);
-```
-
----
+- claim verification
+- source validation
+- string matching
+- phrase indexing
+- preprocessing
+- frequency analysis
+- temporal analysis
+- greedy filtering
+- end-to-end scoring integration
 
 ## Benchmarks
 
-Measured on a 32-thread machine with `-O3`:
+Run the benchmark targets individually:
 
-| Metric | Result |
-|---|---|
-| Throughput | ~71,428 articles/sec |
-| Latency P50 | < 1 ms |
-| Latency P99 | < 2 ms |
-| Memory (1,000 articles) | ~0.85 MB |
-
-Benchmarks are located in `benchmark/` and cover throughput (`benchmark_throughput`), tail latency (`benchmark_latency`), and heap usage (`benchmark_memory`).
-
----
-
-## Data & Testing
-
-### Dataset Coverage
-NewsScope includes a comprehensive validation dataset:
-
-- **177 articles** across diverse topics and sources
-  - 67 trusted sources (Reuters, BBC, AP, Bloomberg, Nature, Science, etc.)
-  - 74 fake/conspiracy sources (typical red flags: leaked docs, insider claims, etc.)
-  - 36 neutral/opinion pieces (ambiguous content requiring verification)
-- **708 negative terms** for frequency analysis (expanded from original 539)
-  - Critical clickbait/conspiracy keywords: leaked, insider, bombshell, shocking, coverup, etc.
-  - Single-word variants for token-based matching
-  - Multi-word phrases retained for future n-gram support
-- **288 sources** in credibility database with trust scores (0-100)
-- **576 suspicious phrases** in Trie index for pattern detection
-
-**Topic coverage**: Politics, health, technology, business, science, environment, international affairs
-
-All data files located in `data/`:
-- `articles.json` — 177 test articles (auto-loaded by demo)
-- `sources.csv` — trusted/untrusted source database  
-- `negative_terms.csv` — weighted suspicious keyword dictionary
-- `suspicious_phrases.txt` — known fake news phrase patterns
-
-### Test Suite
-69 tests across 9 test suites, all passing:
 ```bash
-$ make run-tests
-✓ test_claim_verifier       (5 tests)
-✓ test_frequency_analyzer   (7 tests)
-✓ test_greedy_filter        (8 tests)
-✓ test_integration         (15 tests)
-✓ test_phrase_indexer      (6 tests)
-✓ test_preprocessing       (5 tests)
-✓ test_source_validator    (8 tests)
-✓ test_string_matcher      (8 tests)
-✓ test_temporal_analyzer   (7 tests)
+make run-throughput
+make run-latency
+make run-memory
 ```
 
----
+These are useful when tuning heuristics, changing data files, or validating UI and scoring updates against runtime cost.
 
-## Project Structure
+## Architecture Snapshot
 
-```
-NewsScope/
-├── include/                  # Public headers
-│   ├── types.h               # Article, CredibilityResult, shared structs
-│   ├── scoring_engine.h      # Main engine interface
-│   ├── preprocessing.h
-│   ├── source_validator.h
-│   ├── phrase_indexer.h
-│   ├── string_matcher.h
-│   ├── frequency_analyzer.h
-│   ├── temporal_analyzer.h
-│   ├── greedy_filter.h
-│   ├── claim_verifier.h
-│   └── thread_pool.h
-├── src/                      # Module implementations + demo entrypoint
-├── tests/                    # Unit and integration tests (one file per module)
-├── benchmark/                # Throughput, latency, and memory benchmarks
-├── data/                     # Dataset (177 articles, 708 terms, 288 sources, 576 phrases)
-├── web/                      # Web portal for browser-based article analysis
-├── docs/                     # Architecture, complexity analysis, class diagrams
-├── Makefile
-└── CMakeLists.txt
+```text
+Article
+  -> Preprocessor
+  -> SourceValidator
+  -> PhraseIndexer
+  -> StringMatcher
+  -> FrequencyAnalyzer
+  -> TemporalAnalyzer
+  -> GreedyFilter
+  -> ClaimVerifier
+  -> ScoringEngine
+  -> CredibilityResult
 ```
 
----
+The engine is intentionally modular: each detector remains individually testable while the scoring engine stays responsible for aggregation and calibration.
+
+## Design Principles
+
+- `Explainability first`
+  results should be understandable without reverse-engineering the code
+- `Deterministic behavior`
+  identical input should not drift between runs
+- `Practical performance`
+  the system should feel instant for local use
+- `Composable modules`
+  heuristics should be tunable without rewriting the whole pipeline
 
 ## Documentation
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — component design and concurrency model
-- [`docs/COMPLEXITY_ANALYSIS.md`](docs/COMPLEXITY_ANALYSIS.md) — per-module time and space analysis
-- [`docs/CLASS_DIAGRAMS.txt`](docs/CLASS_DIAGRAMS.txt) — class relationships
-- [`docs/EXAMPLES.md`](docs/EXAMPLES.md) — extended usage examples
-- [`docs/PROJECT_REPORT.md`](docs/PROJECT_REPORT.md) — full project report
+Additional material is available in [`docs/`](./docs):
 
----
+- [`ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+- [`COMPLEXITY_ANALYSIS.md`](./docs/COMPLEXITY_ANALYSIS.md)
+- [`CLASS_DIAGRAMS.txt`](./docs/CLASS_DIAGRAMS.txt)
+- [`EXAMPLES.md`](./docs/EXAMPLES.md)
+- [`PROJECT_REPORT.md`](./docs/PROJECT_REPORT.md)
 
-## Design Goals
+## Current State
 
-- No machine learning or external model dependencies
-- Deterministic, reproducible output for the same input
-- Fully explainable scores — every module reports its reasoning
-- Performance-oriented C++17 with `O3` optimization and thread-safe batch APIs
+NewsScope currently includes:
+
+- a native scoring engine
+- a local web application
+- test and benchmark tooling
+- repository branch protection on active branches
+
+## License
+
+There is no explicit `LICENSE` file in the repository root right now. If you plan to distribute this project publicly, add one first.
