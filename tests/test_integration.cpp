@@ -172,6 +172,7 @@ void test_polished_misinformation_penalty() {
     auto misinfo_result = engine.assess_article(polished_misinfo);
 
     assert(factual_result.overall_score > misinfo_result.overall_score);
+    assert(factual_result.overall_score >= 90.0);  // strong trusted+factual article
     std::cout << "  ✓ Trusted factual score: " << factual_result.overall_score << "\n";
     std::cout << "  ✓ Polished misinformation score: " << misinfo_result.overall_score << "\n";
 }

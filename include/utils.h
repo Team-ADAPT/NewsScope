@@ -55,20 +55,9 @@ inline size_t count_phrase_hits(const std::string& text, const std::vector<std::
     return count;
 }
 
+// count_positive_phrase_hits is an alias for count_phrase_hits (both are negation-aware)
 inline size_t count_positive_phrase_hits(const std::string& text, const std::vector<std::string>& phrases, size_t negation_window = 32) {
-    size_t count = 0;
-    std::string text_lower = to_lower_copy(text);
-    
-    for (const auto& phrase : phrases) {
-        size_t pos = text_lower.find(phrase);
-        while (pos != std::string::npos) {
-            if (!has_negated_prefix(text_lower, pos, negation_window)) {
-                ++count;
-            }
-            pos = text_lower.find(phrase, pos + 1);
-        }
-    }
-    return count;
+    return count_phrase_hits(text, phrases, negation_window);
 }
 
 } // namespace utils
