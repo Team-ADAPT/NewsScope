@@ -96,7 +96,9 @@ ClaimAssessment ClaimVerifier::assess(const std::string& headline, const std::st
         "agency said", "court filing", "court ruled", "committee said",
         "regulator said", "documented", "audit", "data shows",
         "study found", "survey found", "peer-reviewed", "published in",
-        "regulatory filing", "meeting minutes"
+        "regulatory filing", "meeting minutes", "senator said", "president said",
+        "spokesman said", "spokeswoman said", "posted on", "tweeted", "told reporters",
+        "in a statement", "press conference", "news conference", "briefing"
     };
 
     static const std::vector<std::string> attribution_markers = {
@@ -104,14 +106,23 @@ ClaimAssessment ClaimVerifier::assess(const std::string& headline, const std::st
         "minister said", "agency said", "ministry said", "court filing",
         "court said", "committee said", "regulator said", "police said",
         "researchers said", "the report said", "the study said",
-        "announced in a statement", "issued a statement", "published a report"
+        "announced in a statement", "issued a statement", "published a report",
+        "senator said", "congressman said", "lawmaker said", "diplomat said",
+        "foreign minister", "prime minister", "president said", "white house said",
+        "pentagon said", "state department", "told reporters", "in an interview",
+        "said on tuesday", "said on monday", "said on wednesday", "said on thursday",
+        "said on friday", "said on saturday", "said on sunday",
+        "one of his closest allies said", "allies said", "sources said"
     };
 
     static const std::vector<std::string> grounding_markers = {
         "court", "ministry", "agency", "committee", "central bank", "parliament",
         "government", "police", "journal", "study", "survey", "audit",
         "statistics", "report", "filing", "statement", "investigation",
-        "research team", "researchers", "review board", "regulator"
+        "research team", "researchers", "review board", "regulator",
+        "senator", "congressman", "lawmaker", "diplomat", "official",
+        "president", "prime minister", "foreign minister", "state department",
+        "pentagon", "white house", "european", "nato", "united nations"
     };
 
     static const std::vector<std::string> uncertainty_markers = {
@@ -192,49 +203,53 @@ ClaimAssessment ClaimVerifier::assess(const std::string& headline, const std::st
         grounding_hits >= 2 &&
         (result.evidence_hits > 0 || result.attribution_hits > 0 || result.numeric_claims > 0);
 
-    double score = 44.0;
-    score += std::min(30.0, static_cast<double>(result.evidence_hits) * 7.5);
-    score += std::min(12.0, static_cast<double>(result.attribution_hits) * 3.0);
-    score += std::min(10.0, static_cast<double>(grounding_hits) * 2.0);
+    // Improved baseline - 50 gives neutral starting point
+    double score = 50.0;
+    
+    // Positive signals (increased weights for attribution)
+    score += std::min(25.0, static_cast<double>(result.evidence_hits) * 6.0);
+    score += std::min(15.0, static_cast<double>(result.attribution_hits) * 4.0);
+    score += std::min(12.0, static_cast<double>(grounding_hits) * 2.5);
     if (!weak_support) {
         score += std::min(6.0, static_cast<double>(result.numeric_claims) * 1.5);
     }
     if (result.has_quotes) {
-        score += 2.0;
-    }
-    if (has_grounded_specificity) {
         score += 4.0;
     }
+    if (has_grounded_specificity) {
+        score += 5.0;
+    }
 
-    score -= std::min(32.0, static_cast<double>(result.uncertainty_hits) * 6.5);
-    score -= std::min(24.0, static_cast<double>(result.sensational_hits) * 6.0);
-    score -= std::min(28.0, static_cast<double>(result.promotional_hits) * 7.0);
-    score -= std::min(30.0, static_cast<double>(conspiratorial_hits) * 6.0);
+    // Negative signals (reduced aggressiveness)
+    score -= std::min(28.0, static_cast<double>(result.uncertainty_hits) * 5.5);
+    score -= std::min(20.0, static_cast<double>(result.sensational_hits) * 5.0);
+    score -= std::min(24.0, static_cast<double>(result.promotional_hits) * 6.0);
+    score -= std::min(28.0, static_cast<double>(conspiratorial_hits) * 5.5);
 
     const bool unsupported_specific_claims =
         result.numeric_claims > 0 && weak_support;
     if (unsupported_specific_claims) {
-        score -= 12.0;
+        score -= 8.0;
         result.flags.push_back("Numeric claims without evidence/attribution");
     }
 
     if (has_year_reference(text) && result.evidence_hits == 0) {
-        score -= 8.0;
+        score -= 6.0;
         result.flags.push_back("Future-year claim without explicit evidence");
     }
 
-    if (template_hits >= 3 && result.evidence_hits == 0) {
-        score -= 18.0;
+    if (template_hits >= 4 && result.evidence_hits == 0) {
+        score -= 14.0;
         result.flags.push_back("Templated narrative style with weak sourcing");
     }
 
     if (has_year_reference(text) && result.promotional_hits > 0 && result.evidence_hits == 0) {
-        score -= 10.0;
+        score -= 8.0;
         result.flags.push_back("Future-looking promotional claim lacks evidence");
     }
 
-    if (word_count(text) > 70 && weak_support) {
-        score -= 10.0;
+    if (word_count(text) > 100 && weak_support) {
+        score -= 8.0;
         result.flags.push_back("Long narrative with no concrete sourcing markers");
     }
 

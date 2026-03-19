@@ -354,24 +354,39 @@ VerdictDecision classify_verdict(const CredibilityResult& result) {
     const double rabin = module_value("rabin_karp");
     const double greedy = module_value("greedy_filtering");
     const double preprocessing = module_value("preprocessing");
+    const double frequency = module_value("frequency_analysis");
 
-    const bool low_risk_structure =
-        kmp >= 78.0 &&
-        rabin >= 80.0 &&
-        phrase >= 80.0 &&
-        greedy >= 75.0;
+    const bool trusted_source = source >= 75.0;
+    const bool unknown_source = source <= 55.0;
+    
+    const bool low_claim_verifiability = claim < 45.0;
+    const bool very_low_claim = claim < 30.0;
+    
+    const bool detection_flags = kmp < 70.0 || rabin < 70.0 || phrase < 70.0 || frequency < 70.0;
 
     const bool strong_fake_signal =
         overall < 45.0 ||
-        (greedy < 20.0 && source <= 55.0) ||
+        (greedy < 20.0 && unknown_source) ||
         (source < 25.0 && overall < 65.0) ||
-        (claim < 30.0 && !low_risk_structure);
+        (very_low_claim) ||
+        (low_claim_verifiability && unknown_source && overall < 60.0) ||
+        (unknown_source && overall < 55.0) ||
+        (detection_flags && unknown_source && overall < 65.0);
+
+    const bool suspicious_signal =
+        (low_claim_verifiability && unknown_source) ||
+        (unknown_source && overall < 65.0 && !trusted_source);
 
     if (strong_fake_signal) {
         return {"Likely Fake", "Strong credibility-risk signals detected"};
     }
+    
+    if (suspicious_signal && !trusted_source) {
+        return {"Needs Verification", "Unverified source with weak attribution"};
+    }
+    
     (void)preprocessing;
-    return {"Likely Original", "No strong fake-news signal combination detected"};
+    return {"Likely Original", "Credible source and content structure"};
 }
 
 class NewsScopeWebServer {
