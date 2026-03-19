@@ -1,0 +1,8 @@
+build/
+.git/
+docs/
+tests/
+benchmark/
+*.md
+*.txt
+!data/suspicious_phrases.txt
