@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: newsscope
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 8080
