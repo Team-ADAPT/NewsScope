@@ -3,61 +3,118 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_set>
+#include <cmath>
 
 namespace {
 
+// =============================================================================
+// REFINED SCORING CONSTANTS - Calibrated for accuracy
+// =============================================================================
+
+// Base scores
 constexpr double BASE_SCORE = 85.0;
-constexpr double BASELINE_PREPROCESSING_SCORE = 56.0;
+constexpr double BASELINE_PREPROCESSING_SCORE = 62.0;
 
-// Threshold constants
-constexpr size_t SHORT_TEXT_THRESHOLD_CRITICAL = 8;
-constexpr size_t SHORT_TEXT_THRESHOLD_WARNING = 15;
-constexpr double SHORT_TEXT_PENALTY_CRITICAL = 16.0;
-constexpr double SHORT_TEXT_PENALTY_WARNING = 6.0;
+// Short text handling - Less aggressive penalties
+constexpr size_t SHORT_TEXT_THRESHOLD_CRITICAL = 5;
+constexpr size_t SHORT_TEXT_THRESHOLD_WARNING = 12;
+constexpr double SHORT_TEXT_PENALTY_CRITICAL = 8.0;
+constexpr double SHORT_TEXT_PENALTY_WARNING = 3.0;
 
-constexpr double FACTUAL_CUE_BONUS = 7.0;
-constexpr double UNCERTAINTY_PENALTY = 9.0;
+// Factual/uncertainty cue scoring
+constexpr double FACTUAL_CUE_BONUS = 5.5;
+constexpr double UNCERTAINTY_PENALTY = 6.0;
 
-constexpr double PHRASE_PENALTY_PER_HIT = 18.0;
-constexpr double KMP_PENALTY_PER_HIT = 12.0;
-constexpr double RABIN_KARP_PENALTY_PER_HIT = 10.0;
-constexpr double FREQUENCY_PENALTY_MULTIPLIER = 0.85;
+// Pattern matching penalties - Less aggressive with caps
+constexpr double PHRASE_PENALTY_PER_HIT = 12.0;
+constexpr double KMP_PENALTY_PER_HIT = 8.0;
+constexpr double RABIN_KARP_PENALTY_PER_HIT = 6.0;
+constexpr double FREQUENCY_PENALTY_MULTIPLIER = 0.65;
+
+// Maximum penalties (caps to prevent over-penalization)
+constexpr double MAX_PHRASE_PENALTY = 36.0;
+constexpr double MAX_KMP_PENALTY = 32.0;
+constexpr double MAX_RABIN_KARP_PENALTY = 24.0;
+constexpr double MAX_FREQUENCY_PENALTY = 40.0;
 
 // Risk assessment thresholds
-constexpr double VERY_LOW_SOURCE_THRESHOLD = 25.0;
-constexpr double LOW_SOURCE_CREDIBILITY_THRESHOLD = 40.0;
-constexpr double MEDIUM_SOURCE_CREDIBILITY_THRESHOLD = 45.0;
-constexpr double MODERATE_SOURCE_THRESHOLD = 55.0;
-constexpr double HIGH_SOURCE_THRESHOLD = 80.0;
-constexpr double LOW_CLAIM_VERIFIABILITY_THRESHOLD = 50.0;
-constexpr double MODERATE_CLAIM_THRESHOLD = 45.0;
-constexpr double MANIPULATION_THRESHOLD = 20.0;
-constexpr double SUSPICION_THRESHOLD = 55.0;
+constexpr double VERY_LOW_SOURCE_THRESHOLD = 20.0;
+constexpr double LOW_SOURCE_CREDIBILITY_THRESHOLD = 35.0;
+constexpr double MEDIUM_SOURCE_CREDIBILITY_THRESHOLD = 50.0;
+constexpr double HIGH_SOURCE_THRESHOLD = 75.0;
+constexpr double LOW_CLAIM_VERIFIABILITY_THRESHOLD = 40.0;
+constexpr double MODERATE_CLAIM_THRESHOLD = 50.0;
+constexpr double MANIPULATION_THRESHOLD = 25.0;
+constexpr double SUSPICION_THRESHOLD = 60.0;
 
-// Risk penalty amounts
-constexpr double RISK_PENALTY_VERY_LOW_SOURCE = 12.0;
-constexpr double RISK_PENALTY_LOW_SOURCE = 6.0;
-constexpr double RISK_PENALTY_LOW_CLAIM_AND_SOURCE = 4.0;
-constexpr double RISK_PENALTY_SUSPICIOUS_PATTERNS = 10.0;
-constexpr double RISK_PENALTY_PER_UNCERTAINTY = 4.0;
-constexpr double RISK_PENALTY_MAX_UNCERTAINTY = 12.0;
-constexpr double RISK_PENALTY_CLAIM_MULTIPLIER = 0.6;
-constexpr double RISK_PENALTY_COMBINED_LOW = 6.0;
-constexpr double RISK_PENALTY_CLEAN_BUT_WEAK = 2.0;
-constexpr double RISK_PENALTY_SHORT_UNSUPPORTED = 6.0;
+// Risk penalty amounts - More graduated
+constexpr double RISK_PENALTY_VERY_LOW_SOURCE = 8.0;
+constexpr double RISK_PENALTY_LOW_SOURCE = 4.0;
+constexpr double RISK_PENALTY_LOW_CLAIM_AND_SOURCE = 3.0;
+constexpr double RISK_PENALTY_SUSPICIOUS_PATTERNS = 6.0;
+constexpr double RISK_PENALTY_PER_UNCERTAINTY = 2.5;
+constexpr double RISK_PENALTY_MAX_UNCERTAINTY = 8.0;
+constexpr double RISK_PENALTY_CLAIM_MULTIPLIER = 0.4;
+constexpr double RISK_PENALTY_COMBINED_LOW = 4.0;
 
-// Consistency boost amounts
-constexpr double CONSISTENCY_BOOST_FACTUAL = 2.5;
-constexpr double CONSISTENCY_BOOST_HIGH_CLAIM = 1.0;
-constexpr double CONSISTENCY_BOOST_CLEAN_RECORD = 1.5;
+// Consistency boost amounts - Increased for good articles
+constexpr double CONSISTENCY_BOOST_FACTUAL = 4.0;
+constexpr double CONSISTENCY_BOOST_HIGH_CLAIM = 2.0;
+constexpr double CONSISTENCY_BOOST_CLEAN_RECORD = 3.0;
+constexpr double CONSISTENCY_BOOST_TRUSTED_SOURCE = 2.5;
 
-constexpr double RISK_ADJUSTMENT_CENTER = 70.0;
-constexpr double RISK_ADJUSTMENT_MULTIPLIER = 0.30;
+// Score combination weights
+constexpr double SOURCE_WEIGHT = 0.32;
+constexpr double CLAIM_WEIGHT = 0.38;
+constexpr double PREPROCESSING_WEIGHT = 0.15;
+constexpr double DETECTION_WEIGHT = 0.15;
+
+constexpr double RISK_ADJUSTMENT_CENTER = 75.0;
+constexpr double RISK_ADJUSTMENT_MULTIPLIER = 0.20;
 
 using newsscope::utils::clamp_score;
 using newsscope::utils::to_lower_copy;
 using newsscope::utils::count_phrase_hits;
 using newsscope::utils::count_positive_phrase_hits;
+
+// =============================================================================
+// CONTEXT-AWARE PHRASE DETECTION
+// =============================================================================
+
+bool is_negation_context(const std::string& text, size_t pos) {
+    if (pos < 4) return false;
+    size_t start = (pos > 50) ? pos - 50 : 0;
+    std::string context = text.substr(start, pos - start);
+    
+    static const std::vector<std::string> negation_contexts = {
+        "debunk", "refut", "false claim", "disprove", "not true",
+        "incorrect", "misleading claim", "fact check", "verify",
+        "investigated", "found no evidence", "contrary to"
+    };
+    
+    for (const auto& neg : negation_contexts) {
+        if (context.find(neg) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+size_t count_context_aware_hits(const std::string& text, const std::vector<std::string>& patterns) {
+    size_t hits = 0;
+    std::string lower_text = to_lower_copy(text);
+    
+    for (const auto& pattern : patterns) {
+        size_t pos = lower_text.find(pattern);
+        while (pos != std::string::npos) {
+            if (!is_negation_context(lower_text, pos)) {
+                ++hits;
+            }
+            pos = lower_text.find(pattern, pos + 1);
+        }
+    }
+    return hits;
+}
 
 std::string resolve_default_data_file(const std::string& filename) {
     const std::vector<std::string> candidates = {
@@ -222,20 +279,17 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     add_expl("Source Validation", local_scores.source_score, source_msg.str());
     
     auto found_phrases = phrase_indexer->find_in_text(combined_text);
-    local_scores.phrase_score = clamp_score(BASE_SCORE - static_cast<double>(found_phrases.size()) * PHRASE_PENALTY_PER_HIT);
+    double phrase_penalty = std::min(MAX_PHRASE_PENALTY, static_cast<double>(found_phrases.size()) * PHRASE_PENALTY_PER_HIT);
+    local_scores.phrase_score = clamp_score(BASE_SCORE - phrase_penalty);
     std::stringstream phrase_msg;
     phrase_msg << "Found " << found_phrases.size() << " suspicious phrase(s)";
     add_expl("Phrase Indexing", local_scores.phrase_score, phrase_msg.str());
     
     const auto& malicious_patterns = suspicious_text_patterns();
 
-    int kmp_matches = 0;
-    for (const auto& pattern : malicious_patterns) {
-        if (StringMatcher::kmp_exists(normalized_text, pattern)) {
-            kmp_matches++;
-        }
-    }
-    local_scores.kmp_score = clamp_score(BASE_SCORE - static_cast<double>(kmp_matches) * KMP_PENALTY_PER_HIT);
+    size_t kmp_matches = count_context_aware_hits(normalized_text, malicious_patterns);
+    double kmp_penalty = std::min(MAX_KMP_PENALTY, static_cast<double>(kmp_matches) * KMP_PENALTY_PER_HIT);
+    local_scores.kmp_score = clamp_score(BASE_SCORE - kmp_penalty);
     std::stringstream kmp_msg;
     kmp_msg << "KMP found " << kmp_matches << " suspicious pattern(s)";
     add_expl("KMP Matching", local_scores.kmp_score, kmp_msg.str());
@@ -250,7 +304,8 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     for (const auto& entry : rk_results) {
         unique_pattern_hits.insert(entry.second);
     }
-    local_scores.rabin_karp_score = clamp_score(BASE_SCORE - static_cast<double>(unique_pattern_hits.size()) * RABIN_KARP_PENALTY_PER_HIT);
+    double rk_penalty = std::min(MAX_RABIN_KARP_PENALTY, static_cast<double>(unique_pattern_hits.size()) * RABIN_KARP_PENALTY_PER_HIT);
+    local_scores.rabin_karp_score = clamp_score(BASE_SCORE - rk_penalty);
 
     std::stringstream rk_msg;
     rk_msg << "Rabin-Karp found " << unique_pattern_hits.size() << " unique suspicious pattern(s)";
@@ -258,7 +313,8 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     
     frequency_analyzer->analyze(tokens, normalized_text);
     double freq_suspicion = frequency_analyzer->get_suspicion_score();
-    local_scores.frequency_score = clamp_score(BASE_SCORE - (freq_suspicion * FREQUENCY_PENALTY_MULTIPLIER));
+    double freq_penalty = std::min(MAX_FREQUENCY_PENALTY, freq_suspicion * FREQUENCY_PENALTY_MULTIPLIER);
+    local_scores.frequency_score = clamp_score(BASE_SCORE - freq_penalty);
     auto top_negative = frequency_analyzer->get_top_negative_terms(3);
     std::stringstream freq_msg;
     freq_msg << "Found " << top_negative.size() << " negative term(s): ";
@@ -290,74 +346,88 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
               << ", promotional hits: " << claim_assessment.promotional_hits;
     add_expl("Claim Verifiability", local_scores.claim_verifiability_score, claim_msg.str());
 
+    // Determine article structure quality
     const bool low_risk_structure =
         found_phrases.empty() &&
         kmp_matches == 0 &&
         unique_pattern_hits.empty() &&
-        greedy_manipulation < 10.0 &&
-        uncertainty_hits == 0 &&
-        freq_suspicion < 55.0;
+        greedy_manipulation < 15.0 &&
+        uncertainty_hits <= 1 &&
+        freq_suspicion < SUSPICION_THRESHOLD;
 
+    const bool high_quality_article =
+        local_scores.source_score >= HIGH_SOURCE_THRESHOLD &&
+        local_scores.claim_verifiability_score >= 60.0 &&
+        factual_hits >= 1;
+
+    // Risk penalty calculation - more graduated approach
     double risk_penalty = 0.0;
+    
+    // Source-based penalties (only for very low credibility sources)
     if (local_scores.source_score <= VERY_LOW_SOURCE_THRESHOLD) {
         risk_penalty += RISK_PENALTY_VERY_LOW_SOURCE;
     } else if (local_scores.source_score < LOW_SOURCE_CREDIBILITY_THRESHOLD) {
         risk_penalty += RISK_PENALTY_LOW_SOURCE;
     }
+    
+    // Combined source + claim weakness (only if both are weak)
     if (local_scores.source_score < MEDIUM_SOURCE_CREDIBILITY_THRESHOLD &&
-        local_scores.claim_verifiability_score < MODERATE_CLAIM_THRESHOLD) {
-        risk_penalty += RISK_PENALTY_LOW_CLAIM_AND_SOURCE +
-                        ((MODERATE_CLAIM_THRESHOLD - local_scores.claim_verifiability_score) * 0.15);
+        local_scores.claim_verifiability_score < MODERATE_CLAIM_THRESHOLD &&
+        !low_risk_structure) {
+        risk_penalty += RISK_PENALTY_LOW_CLAIM_AND_SOURCE;
     }
+    
+    // Suspicious patterns detected AND weak source
     if (local_scores.source_score < MEDIUM_SOURCE_CREDIBILITY_THRESHOLD &&
-        (!found_phrases.empty() || kmp_matches > 0 || !unique_pattern_hits.empty() ||
-         greedy_manipulation > MANIPULATION_THRESHOLD || freq_suspicion > SUSPICION_THRESHOLD)) {
+        (kmp_matches > 2 || greedy_manipulation > MANIPULATION_THRESHOLD || freq_suspicion > SUSPICION_THRESHOLD)) {
         risk_penalty += RISK_PENALTY_SUSPICIOUS_PATTERNS;
     }
-    if (uncertainty_hits > 0 && factual_hits == 0) {
-        risk_penalty += std::min(RISK_PENALTY_MAX_UNCERTAINTY, static_cast<double>(uncertainty_hits) * RISK_PENALTY_PER_UNCERTAINTY);
+    
+    // Uncertainty without factual balance (only if severe)
+    if (uncertainty_hits > 1 && factual_hits == 0 && !high_quality_article) {
+        risk_penalty += std::min(RISK_PENALTY_MAX_UNCERTAINTY, 
+                                 static_cast<double>(uncertainty_hits - 1) * RISK_PENALTY_PER_UNCERTAINTY);
     }
-    if (local_scores.claim_verifiability_score < LOW_CLAIM_VERIFIABILITY_THRESHOLD) {
-        const double claim_penalty_multiplier =
-            low_risk_structure ? 0.25 : RISK_PENALTY_CLAIM_MULTIPLIER;
-        risk_penalty += (LOW_CLAIM_VERIFIABILITY_THRESHOLD - local_scores.claim_verifiability_score) *
-                        claim_penalty_multiplier;
+    
+    // Very low claim verifiability (reduced threshold and multiplier)
+    if (local_scores.claim_verifiability_score < LOW_CLAIM_VERIFIABILITY_THRESHOLD && !high_quality_article) {
+        const double claim_penalty_multiplier = low_risk_structure ? 0.15 : RISK_PENALTY_CLAIM_MULTIPLIER;
+        risk_penalty += (LOW_CLAIM_VERIFIABILITY_THRESHOLD - local_scores.claim_verifiability_score) * claim_penalty_multiplier;
     }
-    if (local_scores.source_score < LOW_SOURCE_CREDIBILITY_THRESHOLD && local_scores.claim_verifiability_score < MODERATE_CLAIM_THRESHOLD) {
+    
+    // Combined weakness only for severe cases
+    if (local_scores.source_score < LOW_SOURCE_CREDIBILITY_THRESHOLD && 
+        local_scores.claim_verifiability_score < LOW_CLAIM_VERIFIABILITY_THRESHOLD) {
         risk_penalty += RISK_PENALTY_COMBINED_LOW;
     }
-    if (tokens.size() < 10 && local_scores.claim_verifiability_score < MODERATE_SOURCE_THRESHOLD) {
-        risk_penalty += RISK_PENALTY_SHORT_UNSUPPORTED;
-    }
-    if (local_scores.source_score < 50.0 &&
-        local_scores.claim_verifiability_score < MODERATE_CLAIM_THRESHOLD &&
-        low_risk_structure) {
-        risk_penalty += RISK_PENALTY_CLEAN_BUT_WEAK;
-    }
 
+    // Consistency boosts - INCREASED for rewarding good articles
     double consistency_boost = 0.0;
-    if (local_scores.source_score >= HIGH_SOURCE_THRESHOLD &&
-        found_phrases.empty() &&
-        kmp_matches == 0 &&
-        unique_pattern_hits.empty() &&
-        greedy_manipulation < 10.0 &&
-        uncertainty_hits == 0 &&
-        factual_hits >= 1 &&
-        local_scores.claim_verifiability_score >= 65.0) {
-        consistency_boost = CONSISTENCY_BOOST_FACTUAL;
+    
+    // High quality factual article
+    if (high_quality_article && low_risk_structure) {
+        consistency_boost += CONSISTENCY_BOOST_FACTUAL;
     }
-    if (local_scores.claim_verifiability_score >= 75.0) {
+    
+    // Strong claim verifiability
+    if (local_scores.claim_verifiability_score >= 70.0) {
         consistency_boost += CONSISTENCY_BOOST_HIGH_CLAIM;
     }
-
+    
+    // Clean record with decent source and claim
     if (local_scores.source_score >= 50.0 &&
-        local_scores.claim_verifiability_score >= 40.0 &&
-        low_risk_structure &&
-        tokens.size() >= 14) {
+        local_scores.claim_verifiability_score >= 45.0 &&
+        low_risk_structure) {
         consistency_boost += CONSISTENCY_BOOST_CLEAN_RECORD;
     }
+    
+    // Trusted source bonus
+    if (local_scores.source_score >= HIGH_SOURCE_THRESHOLD) {
+        consistency_boost += CONSISTENCY_BOOST_TRUSTED_SOURCE;
+    }
 
-    const double risk_module_average =
+    // Calculate detection module average
+    const double detection_module_average =
         (local_scores.phrase_score +
          local_scores.kmp_score +
          local_scores.rabin_karp_score +
@@ -365,12 +435,15 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
          local_scores.temporal_score +
          local_scores.greedy_score) / 6.0;
 
+    // REFINED scoring formula with proper weights
     const double credibility_core =
-        (local_scores.source_score * 0.38) +
-        (local_scores.claim_verifiability_score * 0.42) +
-        (local_scores.preprocessing_score * 0.20);
+        (local_scores.source_score * SOURCE_WEIGHT) +
+        (local_scores.claim_verifiability_score * CLAIM_WEIGHT) +
+        (local_scores.preprocessing_score * PREPROCESSING_WEIGHT) +
+        (detection_module_average * DETECTION_WEIGHT);
+    
     const double risk_adjustment =
-        (risk_module_average - RISK_ADJUSTMENT_CENTER) * RISK_ADJUSTMENT_MULTIPLIER;
+        (detection_module_average - RISK_ADJUSTMENT_CENTER) * RISK_ADJUSTMENT_MULTIPLIER;
     const double combined = credibility_core + risk_adjustment;
 
     result.overall_score = clamp_score(combined - risk_penalty + consistency_boost);

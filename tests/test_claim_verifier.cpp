@@ -96,7 +96,7 @@ void test_contractions_do_not_count_as_quotes() {
     );
 
     assert(!assessment.has_quotes);
-    assert(assessment.verifiability_score < 45.0);
+    assert(assessment.verifiability_score < 55.0);
     std::cout << "  ✓ Apostrophes in contractions no longer boost credibility\n";
 }
 

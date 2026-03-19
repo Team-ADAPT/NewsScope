@@ -324,3 +324,24 @@ science,trusted,95
 the conversation,trusted,74
 the marshall project,trusted,88
 undark magazine,trusted,84
+Agence France-Presse,92,Major international wire service
+Associated Press,94,AP - leading wire service
+ANSA,85,Italian news agency
+UPI,82,United Press International
+afp,trusted,92
+associated press,trusted,94
+ap news,trusted,94
+press trust of india,trusted,85
+pti,trusted,85
+xinhua,neutral,75
+tass,neutral,70
+dpa,trusted,88
+efe,trusted,85
+kyodo news,trusted,88
+ani,trusted,80
+ians,trusted,80
+pap,trusted,82
+aap,trusted,87
+sda,trusted,85
+apa,trusted,86
+cna,trusted,84
