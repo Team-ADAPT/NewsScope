@@ -53,18 +53,6 @@ private:
     std::unique_ptr<GreedyFilter> greedy_filter;
     std::unique_ptr<ClaimVerifier> claim_verifier;
     
-    struct ModuleScores {
-        double preprocessing_score = 50.0;
-        double source_score = 50.0;
-        double phrase_score = 50.0;
-        double kmp_score = 50.0;
-        double rabin_karp_score = 50.0;
-        double frequency_score = 50.0;
-        double temporal_score = 50.0;
-        double greedy_score = 50.0;
-        double claim_verifiability_score = 50.0;
-    } module_scores;
-    
     static constexpr double DEFAULT_MODULE_WEIGHT = 12.5;  // 100 / 8 modules
     
     struct Weights {
@@ -78,13 +66,8 @@ private:
         double greedy = DEFAULT_MODULE_WEIGHT;
     } weights;
     
-    std::vector<std::string> explanations;
-    mutable std::recursive_mutex assess_mutex;
+    mutable std::mutex assess_mutex;
     bool initialized_resources = false;
-    
-    double calculate_combined_score();
-    void clear_explanations();
-    void add_explanation(const std::string& module_name, double score, const std::string& reason);
 };
 
 }

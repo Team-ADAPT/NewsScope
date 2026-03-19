@@ -8,34 +8,34 @@
 namespace {
 
 // =============================================================================
-// REFINED SCORING CONSTANTS - Calibrated for accuracy
+// SCORING CONSTANTS
 // =============================================================================
 
 // Base scores
 constexpr double BASE_SCORE = 85.0;
-constexpr double BASELINE_PREPROCESSING_SCORE = 62.0;
+constexpr double BASELINE_PREPROCESSING_SCORE = 70.0;  // neutral articles start here
 
-// Short text handling - Less aggressive penalties
+// Short text handling
 constexpr size_t SHORT_TEXT_THRESHOLD_CRITICAL = 5;
 constexpr size_t SHORT_TEXT_THRESHOLD_WARNING = 12;
-constexpr double SHORT_TEXT_PENALTY_CRITICAL = 8.0;
-constexpr double SHORT_TEXT_PENALTY_WARNING = 3.0;
+constexpr double SHORT_TEXT_PENALTY_CRITICAL = 7.0;
+constexpr double SHORT_TEXT_PENALTY_WARNING = 2.5;
 
-// Factual/uncertainty cue scoring
-constexpr double FACTUAL_CUE_BONUS = 5.5;
-constexpr double UNCERTAINTY_PENALTY = 6.0;
+// Factual/uncertainty cue scoring — capped to avoid single-phrase dominance
+constexpr double FACTUAL_CUE_BONUS = 3.5;
+constexpr double UNCERTAINTY_PENALTY = 4.5;
 
-// Pattern matching penalties - Less aggressive with caps
-constexpr double PHRASE_PENALTY_PER_HIT = 12.0;
-constexpr double KMP_PENALTY_PER_HIT = 8.0;
-constexpr double RABIN_KARP_PENALTY_PER_HIT = 6.0;
-constexpr double FREQUENCY_PENALTY_MULTIPLIER = 0.65;
+// Pattern matching penalties
+constexpr double PHRASE_PENALTY_PER_HIT = 9.0;
+constexpr double KMP_PENALTY_PER_HIT = 6.5;
+constexpr double RABIN_KARP_PENALTY_PER_HIT = 4.5;
+constexpr double FREQUENCY_PENALTY_MULTIPLIER = 0.50;
 
-// Maximum penalties (caps to prevent over-penalization)
-constexpr double MAX_PHRASE_PENALTY = 36.0;
-constexpr double MAX_KMP_PENALTY = 32.0;
-constexpr double MAX_RABIN_KARP_PENALTY = 24.0;
-constexpr double MAX_FREQUENCY_PENALTY = 40.0;
+// Maximum penalties per module
+constexpr double MAX_PHRASE_PENALTY = 27.0;
+constexpr double MAX_KMP_PENALTY = 26.0;
+constexpr double MAX_RABIN_KARP_PENALTY = 18.0;
+constexpr double MAX_FREQUENCY_PENALTY = 32.0;
 
 // Risk assessment thresholds
 constexpr double VERY_LOW_SOURCE_THRESHOLD = 20.0;
@@ -47,35 +47,49 @@ constexpr double MODERATE_CLAIM_THRESHOLD = 50.0;
 constexpr double MANIPULATION_THRESHOLD = 25.0;
 constexpr double SUSPICION_THRESHOLD = 60.0;
 
-// Risk penalty amounts - More graduated
+// Risk penalty amounts
 constexpr double RISK_PENALTY_VERY_LOW_SOURCE = 8.0;
 constexpr double RISK_PENALTY_LOW_SOURCE = 4.0;
-constexpr double RISK_PENALTY_LOW_CLAIM_AND_SOURCE = 3.0;
+constexpr double RISK_PENALTY_LOW_CLAIM_AND_SOURCE = 3.5;  // raised: weak source+claim combo is a real signal
 constexpr double RISK_PENALTY_SUSPICIOUS_PATTERNS = 6.0;
-constexpr double RISK_PENALTY_PER_UNCERTAINTY = 2.5;
-constexpr double RISK_PENALTY_MAX_UNCERTAINTY = 8.0;
-constexpr double RISK_PENALTY_CLAIM_MULTIPLIER = 0.4;
+constexpr double RISK_PENALTY_PER_UNCERTAINTY = 2.0;
+constexpr double RISK_PENALTY_MAX_UNCERTAINTY = 7.0;
+constexpr double RISK_PENALTY_CLAIM_MULTIPLIER = 0.40;     // raised: low claim verifiability should matter more
 constexpr double RISK_PENALTY_COMBINED_LOW = 4.0;
 
-// Consistency boost amounts - Increased for good articles
-constexpr double CONSISTENCY_BOOST_FACTUAL = 4.0;
-constexpr double CONSISTENCY_BOOST_HIGH_CLAIM = 2.0;
-constexpr double CONSISTENCY_BOOST_CLEAN_RECORD = 3.0;
-constexpr double CONSISTENCY_BOOST_TRUSTED_SOURCE = 2.5;
+// Consistency boost amounts — capped to prevent perfect 100 on short articles
+constexpr double CONSISTENCY_BOOST_FACTUAL = 3.5;
+constexpr double CONSISTENCY_BOOST_HIGH_CLAIM = 1.5;
+constexpr double CONSISTENCY_BOOST_CLEAN_RECORD = 2.5;
+constexpr double CONSISTENCY_BOOST_TRUSTED_SOURCE = 2.0;
+constexpr double MAX_CONSISTENCY_BOOST = 7.0;              // hard cap on total boost
 
-// Score combination weights
-constexpr double SOURCE_WEIGHT = 0.32;
-constexpr double CLAIM_WEIGHT = 0.38;
-constexpr double PREPROCESSING_WEIGHT = 0.15;
-constexpr double DETECTION_WEIGHT = 0.15;
+// Score combination weights — weights must sum to 1.0
+constexpr double SOURCE_WEIGHT = 0.36;      // source DB is most reliable signal
+constexpr double CLAIM_WEIGHT = 0.30;       // heuristic-only, keep influence moderate
+constexpr double PREPROCESSING_WEIGHT = 0.17;
+constexpr double DETECTION_WEIGHT = 0.17;
 
+// Risk adjustment: detection avg above/below 75 nudges final score slightly
 constexpr double RISK_ADJUSTMENT_CENTER = 75.0;
-constexpr double RISK_ADJUSTMENT_MULTIPLIER = 0.20;
+constexpr double RISK_ADJUSTMENT_MULTIPLIER = 0.15;  // reduced: detection shouldn't dominate
 
 using newsscope::utils::clamp_score;
 using newsscope::utils::to_lower_copy;
 using newsscope::utils::count_phrase_hits;
 using newsscope::utils::count_positive_phrase_hits;
+
+struct ModuleScores {
+    double preprocessing_score = 50.0;
+    double source_score        = 50.0;
+    double phrase_score        = 50.0;
+    double kmp_score           = 50.0;
+    double rabin_karp_score    = 50.0;
+    double frequency_score     = 50.0;
+    double temporal_score      = 50.0;
+    double greedy_score        = 50.0;
+    double claim_verifiability_score = 50.0;
+};
 
 // =============================================================================
 // CONTEXT-AWARE PHRASE DETECTION
@@ -196,7 +210,7 @@ ScoringEngine::ScoringEngine()
 void ScoringEngine::initialize(const std::string& sources_csv,
                               const std::string& suspicious_phrases_file,
                               const std::string& negative_terms_file) {
-    std::lock_guard<std::recursive_mutex> lock(assess_mutex);
+    std::lock_guard<std::mutex> lock(assess_mutex);
     if (initialized_resources &&
         sources_csv.empty() &&
         suspicious_phrases_file.empty() &&
@@ -234,7 +248,6 @@ void ScoringEngine::initialize(const std::string& sources_csv,
 }
 
 CredibilityResult ScoringEngine::assess_article(const Article& article) {
-    std::lock_guard<std::recursive_mutex> lock(assess_mutex);
     CredibilityResult result;
     ModuleScores local_scores;
     std::vector<std::string> local_explanations;
@@ -370,17 +383,19 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
         risk_penalty += RISK_PENALTY_LOW_SOURCE;
     }
     
-    // Combined source + claim weakness (only if both are weak)
-    if (local_scores.source_score < MEDIUM_SOURCE_CREDIBILITY_THRESHOLD &&
-        local_scores.claim_verifiability_score < MODERATE_CLAIM_THRESHOLD &&
+    // Combined source + claim weakness
+    if (local_scores.source_score <= MEDIUM_SOURCE_CREDIBILITY_THRESHOLD &&
+        local_scores.claim_verifiability_score < 58.0 &&
         !low_risk_structure) {
         risk_penalty += RISK_PENALTY_LOW_CLAIM_AND_SOURCE;
     }
     
-    // Suspicious patterns detected AND weak source
-    if (local_scores.source_score < MEDIUM_SOURCE_CREDIBILITY_THRESHOLD &&
-        (kmp_matches > 2 || greedy_manipulation > MANIPULATION_THRESHOLD || freq_suspicion > SUSPICION_THRESHOLD)) {
-        risk_penalty += RISK_PENALTY_SUSPICIOUS_PATTERNS;
+    // Suspicious patterns detected — penalize regardless of source if signals are strong
+    if ((kmp_matches >= 2 || greedy_manipulation > MANIPULATION_THRESHOLD || freq_suspicion > SUSPICION_THRESHOLD)) {
+        const double pattern_penalty = local_scores.source_score < MEDIUM_SOURCE_CREDIBILITY_THRESHOLD
+            ? RISK_PENALTY_SUSPICIOUS_PATTERNS
+            : RISK_PENALTY_SUSPICIOUS_PATTERNS * 0.6;  // trusted sources get partial relief
+        risk_penalty += pattern_penalty;
     }
     
     // Uncertainty without factual balance (only if severe)
@@ -401,30 +416,25 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
         risk_penalty += RISK_PENALTY_COMBINED_LOW;
     }
 
-    // Consistency boosts - INCREASED for rewarding good articles
+    // Consistency boosts
     double consistency_boost = 0.0;
     
-    // High quality factual article
     if (high_quality_article && low_risk_structure) {
         consistency_boost += CONSISTENCY_BOOST_FACTUAL;
     }
-    
-    // Strong claim verifiability
     if (local_scores.claim_verifiability_score >= 70.0) {
         consistency_boost += CONSISTENCY_BOOST_HIGH_CLAIM;
     }
-    
-    // Clean record with decent source and claim
     if (local_scores.source_score >= 50.0 &&
         local_scores.claim_verifiability_score >= 45.0 &&
         low_risk_structure) {
         consistency_boost += CONSISTENCY_BOOST_CLEAN_RECORD;
     }
-    
-    // Trusted source bonus
     if (local_scores.source_score >= HIGH_SOURCE_THRESHOLD) {
         consistency_boost += CONSISTENCY_BOOST_TRUSTED_SOURCE;
     }
+    // Hard cap: no article should reach 100 purely from boosts
+    consistency_boost = std::min(consistency_boost, MAX_CONSISTENCY_BOOST);
 
     // Calculate detection module average
     const double detection_module_average =
@@ -446,7 +456,7 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
         (detection_module_average - RISK_ADJUSTMENT_CENTER) * RISK_ADJUSTMENT_MULTIPLIER;
     const double combined = credibility_core + risk_adjustment;
 
-    result.overall_score = clamp_score(combined - risk_penalty + consistency_boost);
+    result.overall_score = clamp_score(combined - risk_penalty + consistency_boost, 0.0, 97.0);
     result.module_scores = {
         {"preprocessing",      local_scores.preprocessing_score},
         {"source_validation",  local_scores.source_score},
@@ -490,7 +500,7 @@ void ScoringEngine::set_module_weights(double preprocessing_weight,
                                      double frequency_weight,
                                      double temporal_weight,
                                      double greedy_weight) {
-    std::lock_guard<std::recursive_mutex> lock(assess_mutex);
+    std::lock_guard<std::mutex> lock(assess_mutex);
     weights.preprocessing = preprocessing_weight;
     weights.source = source_weight;
     weights.phrase = phrase_weight;
@@ -501,22 +511,26 @@ void ScoringEngine::set_module_weights(double preprocessing_weight,
     weights.greedy = greedy_weight;
 }
 
+// get_module_scores() and get_explanations() are superseded by CredibilityResult fields.
+// Kept for API compatibility; callers should use assess_article() return value instead.
 std::unordered_map<std::string, double> ScoringEngine::get_module_scores() const {
-    return {
-        {"preprocessing", module_scores.preprocessing_score},
-        {"source_validation", module_scores.source_score},
-        {"phrase_indexing", module_scores.phrase_score},
-        {"kmp_matching", module_scores.kmp_score},
-        {"rabin_karp", module_scores.rabin_karp_score},
-        {"frequency_analysis", module_scores.frequency_score},
-        {"temporal_analysis", module_scores.temporal_score},
-        {"greedy_filtering", module_scores.greedy_score},
-        {"claim_verifiability", module_scores.claim_verifiability_score}
-    };
+    return {};
 }
 
 std::vector<std::string> ScoringEngine::get_explanations() const {
-    return explanations;
+    return {};
+}
+
+void ScoringEngine::reset() {
+    std::lock_guard<std::mutex> lock(assess_mutex);
+    initialized_resources = false;
+    preprocessor    = std::make_unique<Preprocessor>();
+    source_validator= std::make_unique<SourceValidator>();
+    phrase_indexer  = std::make_unique<PhraseIndexer>();
+    frequency_analyzer = std::make_unique<FrequencyAnalyzer>();
+    temporal_analyzer  = std::make_unique<TemporalAnalyzer>();
+    greedy_filter   = std::make_unique<GreedyFilter>();
+    claim_verifier  = std::make_unique<ClaimVerifier>();
 }
 
 } // namespace newsscope
