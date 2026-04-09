@@ -399,7 +399,8 @@ public:
     void run() {
         g_server_fd = create_server_socket();
         if (g_server_fd < 0) {
-            std::cerr << "Failed to create server socket\n";
+            std::cerr << "Failed to create server socket on port " << port_
+                      << ": " << std::strerror(errno) << "\n";
             return;
         }
 
@@ -715,7 +716,20 @@ int main() {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    constexpr int port = 8080;
+    int port = 8080;
+    if (const char* env_port = std::getenv("PORT")) {
+        try {
+            const int parsed = std::stoi(env_port);
+            if (parsed > 0 && parsed <= 65535) {
+                port = parsed;
+            } else {
+                std::cerr << "Ignoring invalid PORT value: " << env_port << "\n";
+            }
+        } catch (const std::exception&) {
+            std::cerr << "Ignoring invalid PORT value: " << env_port << "\n";
+        }
+    }
+
     const size_t workers = std::max<size_t>(4, std::thread::hardware_concurrency());
     NewsScopeWebServer server(port, workers);
     server.run();

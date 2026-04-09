@@ -18,6 +18,25 @@ const textInput = document.getElementById("text-input");
 const sourceInput = document.getElementById("source-input");
 
 const CIRCUMFERENCE = 2 * Math.PI * 54;
+let scoreAnimationFrame = null;
+
+function normalizeScore(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function resetScoreRing() {
+  if (scoreAnimationFrame !== null) {
+    cancelAnimationFrame(scoreAnimationFrame);
+    scoreAnimationFrame = null;
+  }
+
+  scoreCircle.style.setProperty("--progress", "0");
+  scoreNumber.textContent = "0";
+}
 
 function showStatus(message, tone = "working") {
   statusBox.textContent = message;
@@ -38,8 +57,7 @@ function clearResult() {
   resultInsights.innerHTML = "";
   resultMeta.textContent = "";
   resultLabel.textContent = "";
-  scoreNumber.textContent = "0";
-  scoreRingFill.style.strokeDashoffset = CIRCUMFERENCE;
+  resetScoreRing();
   scoreRingFill.classList.remove("high", "medium", "low");
   scoreCircle.classList.remove("tone-high", "tone-medium", "tone-low");
 }
@@ -57,27 +75,34 @@ function formatModuleName(name) {
 }
 
 function animateScore(targetScore) {
+  const safeTargetScore = normalizeScore(targetScore);
   const duration = 1100;
   const startTime = performance.now();
   const startValue = 0;
+
+  resetScoreRing();
+  // Force the browser to apply the reset before starting a new animation.
+  scoreCircle.getBoundingClientRect();
 
   function update(currentTime) {
     const elapsed = currentTime - startTime;
     const progress = Math.min(elapsed / duration, 1);
     const easeOut = 1 - Math.pow(1 - progress, 3);
-    const currentScore = startValue + (targetScore - startValue) * easeOut;
+    const currentScore = startValue + (safeTargetScore - startValue) * easeOut;
 
     scoreNumber.textContent = Math.round(currentScore);
-
-    const offset = CIRCUMFERENCE - (currentScore / 100) * CIRCUMFERENCE;
-    scoreRingFill.style.strokeDashoffset = offset;
+    scoreCircle.style.setProperty("--progress", currentScore.toFixed(2));
 
     if (progress < 1) {
-      requestAnimationFrame(update);
+      scoreAnimationFrame = requestAnimationFrame(update);
+    } else {
+      scoreAnimationFrame = null;
+      scoreNumber.textContent = Math.round(safeTargetScore);
+      scoreCircle.style.setProperty("--progress", safeTargetScore.toFixed(2));
     }
   }
 
-  requestAnimationFrame(update);
+  scoreAnimationFrame = requestAnimationFrame(update);
 }
 
 function createInsightCard(title, value, tone) {
@@ -134,7 +159,7 @@ function renderModules(modules) {
   Object.entries(modules)
     .sort((a, b) => Number(b[1]) - Number(a[1]))
     .forEach(([name, value], index) => {
-      const numValue = Number(value);
+      const numValue = normalizeScore(value);
       const moduleClass = getScoreClass(numValue);
 
       const item = document.createElement("div");
@@ -161,12 +186,21 @@ function renderModules(modules) {
 }
 
 function renderResult(data) {
-  const score = Number(data.score || 0);
+  const score = normalizeScore(data.score);
   const modules = data.module_scores || {};
 
+  scoreRingFill.classList.remove("high", "medium", "low");
+  scoreCircle.classList.remove("tone-high", "tone-medium", "tone-low");
   const scoreClass = getScoreClass(score);
   scoreRingFill.classList.add(scoreClass);
   scoreCircle.classList.add(`tone-${scoreClass}`);
+  const ringColor =
+    scoreClass === "high"
+      ? "var(--success)"
+      : scoreClass === "medium"
+        ? "var(--warning)"
+        : "var(--danger)";
+  scoreCircle.style.setProperty("--ring-color", ringColor);
   animateScore(score);
 
   const labelText = data.label || "Analysis Complete";
