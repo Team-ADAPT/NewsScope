@@ -100,6 +100,26 @@ void test_contractions_do_not_count_as_quotes() {
     std::cout << "  ✓ Apostrophes in contractions no longer boost credibility\n";
 }
 
+void test_anonymous_sourcing_is_weaker_than_named_evidence() {
+    std::cout << "Testing Anonymous Sourcing Penalty...\n";
+    ClaimVerifier verifier;
+
+    auto named = verifier.assess(
+        "Ministry releases audit update",
+        "According to the official report, the ministry said auditors documented the variance."
+    );
+
+    auto anonymous = verifier.assess(
+        "Audit update circulates",
+        "Sources said the review found major issues, but the people familiar with the matter declined to be named."
+    );
+
+    assert(named.verifiability_score > anonymous.verifiability_score);
+    assert(anonymous.verifiability_score < 55.0);
+    std::cout << "  ✓ Named evidence score: " << named.verifiability_score
+              << ", anonymous-only score: " << anonymous.verifiability_score << "\n";
+}
+
 int main() {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "CLAIM VERIFIER TESTS\n";
@@ -112,6 +132,7 @@ int main() {
         test_unverified_global_shutdown_claim_penalty();
         test_negated_peer_review_does_not_count_as_evidence();
         test_contractions_do_not_count_as_quotes();
+        test_anonymous_sourcing_is_weaker_than_named_evidence();
 
         std::cout << "\n" << std::string(60, '=') << "\n";
         std::cout << "All claim verifier tests passed! ✓\n";

@@ -97,7 +97,7 @@ ClaimAssessment ClaimVerifier::assess(const std::string& headline, const std::st
         "regulator said", "documented", "audit", "data shows",
         "study found", "survey found", "peer-reviewed", "published in",
         "regulatory filing", "meeting minutes", "senator said", "president said",
-        "spokesman said", "spokeswoman said", "posted on", "tweeted", "told reporters",
+        "spokesman said", "spokeswoman said", "told reporters",
         "in a statement", "press conference", "news conference", "briefing"
     };
 
@@ -112,7 +112,14 @@ ClaimAssessment ClaimVerifier::assess(const std::string& headline, const std::st
         "pentagon said", "state department", "told reporters", "in an interview",
         "said on tuesday", "said on monday", "said on wednesday", "said on thursday",
         "said on friday", "said on saturday", "said on sunday",
-        "one of his closest allies said", "allies said", "sources said"
+        "one of his closest allies said", "allies said"
+    };
+
+    static const std::vector<std::string> anonymous_sourcing_markers = {
+        "sources said", "source said", "people familiar", "officials said",
+        "according to sources", "sources familiar", "declined to be named",
+        "speaking on condition of anonymity", "requested anonymity",
+        "anonymous source", "anonymous sources", "insiders said"
     };
 
     static const std::vector<std::string> grounding_markers = {
@@ -186,6 +193,7 @@ ClaimAssessment ClaimVerifier::assess(const std::string& headline, const std::st
     const int template_hits = count_phrase_hits(text, templated_narrative_markers);
     const int extraordinary_hits = count_phrase_hits(text, extraordinary_claim_markers);
     const int conspiratorial_hits = count_phrase_hits(text, conspiratorial_markers);
+    const int anonymous_sourcing_hits = count_phrase_hits(text, anonymous_sourcing_markers);
     const bool no_official_release =
         text.find("no official press release") != std::string::npos ||
         text.find("no official statement") != std::string::npos;
@@ -274,6 +282,17 @@ ClaimAssessment ClaimVerifier::assess(const std::string& headline, const std::st
 
     if (result.promotional_hits > 0 && result.evidence_hits == 0) {
         result.flags.push_back("Promotional framing with weak verifiability");
+    }
+
+    if (anonymous_sourcing_hits > 0) {
+        const bool anonymous_only = result.evidence_hits == 0 && grounding_hits < 2;
+        if (anonymous_only) {
+            score -= std::min(12.0, static_cast<double>(anonymous_sourcing_hits) * 4.0);
+            result.flags.push_back("Anonymous sourcing without primary evidence");
+        } else {
+            score -= std::min(4.0, static_cast<double>(anonymous_sourcing_hits) * 1.5);
+            result.flags.push_back("Anonymous sourcing reduces certainty");
+        }
     }
 
     if (weak_support && result.uncertainty_hits > 0) {

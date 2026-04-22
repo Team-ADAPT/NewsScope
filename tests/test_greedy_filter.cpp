@@ -140,6 +140,25 @@ void test_full_article_analysis() {
     std::cout << "  ✓ Full article analysis score: " << score << "\n";
 }
 
+void test_non_clickbait_quote_is_not_flagged_as_clickbait() {
+    std::cout << "Testing Non-Clickbait Quote Handling...\n";
+    GreedyFilter filter;
+
+    std::string headline = "Fed chair says 'you won't see immediate rate cuts'";
+    auto signals = filter.detect_patterns(headline);
+
+    bool found_clickbait = false;
+    for (const auto& signal : signals) {
+        if (signal.pattern_name == "CLICKBAIT_STRUCTURE") {
+            found_clickbait = true;
+            break;
+        }
+    }
+
+    assert(!found_clickbait);
+    std::cout << "  ✓ Ordinary quoted language no longer trips clickbait structure\n";
+}
+
 int main() {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "GREEDY FILTER TESTS\n";
@@ -154,6 +173,7 @@ int main() {
         test_manipulation_score();
         test_empty_signals();
         test_full_article_analysis();
+        test_non_clickbait_quote_is_not_flagged_as_clickbait();
         
         std::cout << "\n" << std::string(60, '=') << "\n";
         std::cout << "All greedy filter tests passed! ✓\n";

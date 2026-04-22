@@ -6,6 +6,33 @@
 
 namespace newsscope {
 
+namespace {
+
+bool is_word_char(char c) {
+    return std::isalnum(static_cast<unsigned char>(c));
+}
+
+bool contains_phrase_with_boundaries(const std::string& text, const std::string& phrase) {
+    if (text.empty() || phrase.empty()) {
+        return false;
+    }
+
+    size_t pos = text.find(phrase);
+    while (pos != std::string::npos) {
+        const bool left_ok = (pos == 0) || !is_word_char(text[pos - 1]);
+        const size_t end = pos + phrase.size();
+        const bool right_ok = (end >= text.size()) || !is_word_char(text[end]);
+        if (left_ok && right_ok) {
+            return true;
+        }
+        pos = text.find(phrase, pos + 1);
+    }
+
+    return false;
+}
+
+} // namespace
+
 GreedyFilter::GreedyFilter() {}
 
 bool GreedyFilter::detect_all_caps(const std::string& text) {
@@ -42,7 +69,7 @@ bool GreedyFilter::detect_sensational_words(const std::string& text) {
         "mind-blowing"
     };
     for (const auto& word : sensational) {
-        if (text.find(word) != std::string::npos) {
+        if (contains_phrase_with_boundaries(text, word)) {
             return true;
         }
     }
@@ -52,10 +79,10 @@ bool GreedyFilter::detect_sensational_words(const std::string& text) {
 bool GreedyFilter::detect_clickbait_structure(const std::string& text) {
     static const std::vector<std::string> clickbait_patterns = {
         "you won't believe", "this one trick", "doctors hate", "click here",
-        "see what", "find out", "what happens next", "you won't", "shocking truth"
+        "see what", "find out", "what happens next", "shocking truth"
     };
     for (const auto& pattern : clickbait_patterns) {
-        if (text.find(pattern) != std::string::npos) {
+        if (contains_phrase_with_boundaries(text, pattern)) {
             return true;
         }
     }
@@ -69,7 +96,7 @@ bool GreedyFilter::detect_urgency_tactics(const std::string& text) {
     };
     int urgency_count = 0;
     for (const auto& word : urgency_words) {
-        if (text.find(word) != std::string::npos) {
+        if (contains_phrase_with_boundaries(text, word)) {
             urgency_count++;
         }
     }
@@ -83,7 +110,7 @@ bool GreedyFilter::detect_emotional_manipulation(const std::string& text) {
     };
     int emotional_count = 0;
     for (const auto& word : emotional_words) {
-        if (text.find(word) != std::string::npos) {
+        if (contains_phrase_with_boundaries(text, word)) {
             emotional_count++;
         }
     }
