@@ -38,7 +38,7 @@ def infer_binary_label(article: dict) -> Optional[int]:
             value = str(article[key]).strip().lower()
             if value in {"1", "real", "true", "trusted", "credible"}:
                 return 1
-            if value in {"0", "fake", "false", "untrusted", "misleading"}:
+            if value in {"0", "fake", "false", "untrusted", "misleading", "non_credible"}:
                 return 0
 
     if "is_fake" in article:
@@ -48,11 +48,9 @@ def infer_binary_label(article: dict) -> Optional[int]:
             pass
 
     article_id = str(article.get("id", "")).strip().lower()
-    if article_id.startswith("trusted-"):
+    if article_id.startswith(("trusted-", "trust-", "ext-credible-")):
         return 1
-    if article_id.startswith("untrusted-"):
-        return 0
-    if article_id.startswith("fake-"):
+    if article_id.startswith(("untrusted-", "fake-", "ext-fake-")):
         return 0
 
     source = str(article.get("source", "")).strip().lower()

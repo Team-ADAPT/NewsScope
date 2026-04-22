@@ -28,6 +28,11 @@ std::string join_tokens(const std::vector<std::string>& tokens) {
     return out.str();
 }
 
+bool looks_like_domain_like_source(const std::string& text) {
+    return text.find('.') != std::string::npos ||
+           text.find('/') != std::string::npos;
+}
+
 bool is_common_prefix_token(const std::string& token) {
     static const std::set<std::string> prefixes = {
         "www", "m", "mobile", "amp", "edition"
@@ -37,8 +42,7 @@ bool is_common_prefix_token(const std::string& token) {
 
 bool is_common_suffix_token(const std::string& token) {
     static const std::set<std::string> suffixes = {
-        "com", "org", "net", "co", "io", "uk", "us", "in", "ca", "au",
-        "news", "media"
+        "com", "org", "net", "co", "io", "uk", "us", "in", "ca", "au"
     };
     return suffixes.find(token) != suffixes.end();
 }
@@ -64,6 +68,7 @@ bool token_subset_match(const std::vector<std::string>& input_tokens,
 namespace newsscope {
 
 std::string SourceValidator::normalize_source_name(const std::string& source_name) const {
+    const bool domain_like_source = looks_like_domain_like_source(source_name);
     std::string normalized;
     normalized.reserve(source_name.size());
     bool previous_space = false;
@@ -89,16 +94,18 @@ std::string SourceValidator::normalize_source_name(const std::string& source_nam
     }
 
     std::vector<std::string> tokens = split_tokens(normalized);
-    while (!tokens.empty() && is_common_prefix_token(tokens.front())) {
-        tokens.erase(tokens.begin());
-    }
-    while (tokens.size() > 1) {
-        const std::string& tail = tokens.back();
-        if (is_common_suffix_token(tail)) {
-            tokens.pop_back();
-            continue;
+    if (domain_like_source) {
+        while (!tokens.empty() && is_common_prefix_token(tokens.front())) {
+            tokens.erase(tokens.begin());
         }
-        break;
+        while (tokens.size() > 1) {
+            const std::string& tail = tokens.back();
+            if (is_common_suffix_token(tail)) {
+                tokens.pop_back();
+                continue;
+            }
+            break;
+        }
     }
     if (tokens.size() > 1 && tokens.front() == "the") {
         tokens.erase(tokens.begin());

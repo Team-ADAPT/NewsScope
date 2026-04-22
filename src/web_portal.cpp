@@ -23,6 +23,7 @@
 #include <vector>
 
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -190,6 +191,61 @@ bool is_reasonable_path(const std::string& path) {
         }
     }
     return true;
+}
+
+bool is_private_or_local_sockaddr(const sockaddr* addr) {
+    if (!addr) {
+        return true;
+    }
+
+    if (addr->sa_family == AF_INET) {
+        const auto* addr4 = reinterpret_cast<const sockaddr_in*>(addr);
+        const uint32_t host_order = ntohl(addr4->sin_addr.s_addr);
+        const uint8_t first = static_cast<uint8_t>((host_order >> 24) & 0xFF);
+        const uint8_t second = static_cast<uint8_t>((host_order >> 16) & 0xFF);
+
+        return first == 10 ||
+               first == 127 ||
+               first == 0 ||
+               (first == 169 && second == 254) ||
+               (first == 172 && second >= 16 && second <= 31) ||
+               (first == 192 && second == 168) ||
+               (first == 100 && second >= 64 && second <= 127);
+    }
+
+    if (addr->sa_family == AF_INET6) {
+        const auto* addr6 = reinterpret_cast<const sockaddr_in6*>(addr);
+        const auto& bytes = addr6->sin6_addr.s6_addr;
+        const bool loopback = IN6_IS_ADDR_LOOPBACK(&addr6->sin6_addr);
+        const bool link_local = IN6_IS_ADDR_LINKLOCAL(&addr6->sin6_addr);
+        const bool unique_local = (bytes[0] & 0xFE) == 0xFC;
+        const bool unspecified = IN6_IS_ADDR_UNSPECIFIED(&addr6->sin6_addr);
+        return loopback || link_local || unique_local || unspecified;
+    }
+
+    return true;
+}
+
+bool host_resolves_to_public_address(const std::string& host) {
+    addrinfo hints{};
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_family = AF_UNSPEC;
+
+    addrinfo* results = nullptr;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &results) != 0) {
+        return false;
+    }
+
+    bool found_public = false;
+    for (addrinfo* current = results; current != nullptr; current = current->ai_next) {
+        if (!is_private_or_local_sockaddr(current->ai_addr)) {
+            found_public = true;
+            break;
+        }
+    }
+
+    freeaddrinfo(results);
+    return found_public;
 }
 
 bool is_allowed_http_url(const std::string& raw_url) {
@@ -624,6 +680,16 @@ std::string read_fd_limited(int fd, size_t limit_bytes, bool& truncated) {
 }
 
 bool fetch_url_payload(const std::string& url, std::string& payload, std::string& error) {
+    const std::string host = extract_host_from_url(to_lower(url));
+    if (host.empty()) {
+        error = "Could not extract URL host";
+        return false;
+    }
+    if (!host_resolves_to_public_address(host)) {
+        error = "URL host does not resolve to a public address";
+        return false;
+    }
+
     int pipe_fds[2];
     if (pipe(pipe_fds) != 0) {
         error = "Failed to allocate fetch pipeline";
@@ -920,34 +986,32 @@ bool parse_http_request(const std::string& raw, HttpRequest& request) {
     return true;
 }
 
-std::string extract_json_string(const std::string& body, const std::string& key) {
-    const std::string token = "\"" + key + "\"";
-    size_t pos = body.find(token);
-    if (pos == std::string::npos) {
-        return "";
+void skip_json_whitespace(const std::string& body, size_t& pos) {
+    while (pos < body.size() && std::isspace(static_cast<unsigned char>(body[pos]))) {
+        ++pos;
     }
-    pos = body.find(':', pos + token.size());
-    if (pos == std::string::npos) {
-        return "";
-    }
-    pos = body.find('"', pos + 1);
-    if (pos == std::string::npos) {
-        return "";
-    }
-    ++pos;
+}
 
-    std::string value;
+bool parse_json_string_value(const std::string& body, size_t& pos, std::string& out) {
+    if (pos >= body.size() || body[pos] != '"') {
+        return false;
+    }
+
+    ++pos;
+    out.clear();
     bool escaped = false;
-    for (; pos < body.size(); ++pos) {
-        char c = body[pos];
+
+    while (pos < body.size()) {
+        const char c = body[pos++];
         if (escaped) {
             switch (c) {
-                case 'n': value.push_back('\n'); break;
-                case 'r': value.push_back('\r'); break;
-                case 't': value.push_back('\t'); break;
-                case '\\': value.push_back('\\'); break;
-                case '"': value.push_back('"'); break;
-                default: value.push_back(c); break;
+                case 'n': out.push_back('\n'); break;
+                case 'r': out.push_back('\r'); break;
+                case 't': out.push_back('\t'); break;
+                case '\\': out.push_back('\\'); break;
+                case '"': out.push_back('"'); break;
+                case '/': out.push_back('/'); break;
+                default: out.push_back(c); break;
             }
             escaped = false;
             continue;
@@ -957,11 +1021,68 @@ std::string extract_json_string(const std::string& body, const std::string& key)
             continue;
         }
         if (c == '"') {
-            break;
+            return true;
         }
-        value.push_back(c);
+        out.push_back(c);
     }
-    return value;
+
+    return false;
+}
+
+bool parse_request_json_object(const std::string& body,
+                               std::unordered_map<std::string, std::string>& values) {
+    values.clear();
+    size_t pos = 0;
+    skip_json_whitespace(body, pos);
+    if (pos >= body.size() || body[pos] != '{') {
+        return false;
+    }
+    ++pos;
+
+    while (true) {
+        skip_json_whitespace(body, pos);
+        if (pos >= body.size()) {
+            return false;
+        }
+        if (body[pos] == '}') {
+            ++pos;
+            skip_json_whitespace(body, pos);
+            return pos == body.size();
+        }
+
+        std::string key;
+        if (!parse_json_string_value(body, pos, key)) {
+            return false;
+        }
+
+        skip_json_whitespace(body, pos);
+        if (pos >= body.size() || body[pos] != ':') {
+            return false;
+        }
+        ++pos;
+        skip_json_whitespace(body, pos);
+
+        std::string value;
+        if (!parse_json_string_value(body, pos, value)) {
+            return false;
+        }
+        values[key] = value;
+
+        skip_json_whitespace(body, pos);
+        if (pos >= body.size()) {
+            return false;
+        }
+        if (body[pos] == ',') {
+            ++pos;
+            continue;
+        }
+        if (body[pos] == '}') {
+            ++pos;
+            skip_json_whitespace(body, pos);
+            return pos == body.size();
+        }
+        return false;
+    }
 }
 
 std::string job_status_to_string(JobStatus status) {
@@ -1205,17 +1326,24 @@ private:
     }
 
     void handle_submit_job(int fd, const HttpRequest& request) {
-        const std::string text = trim(extract_json_string(request.body, "text"));
-        const std::string url = trim(extract_json_string(request.body, "url"));
-        const std::string source = trim(extract_json_string(request.body, "source"));
-
         const auto content_type_it = request.headers.find("content-type");
         if (content_type_it == request.headers.end() ||
-            content_type_it->second.find("application/json") == std::string::npos) {
+            to_lower(content_type_it->second).find("application/json") == std::string::npos) {
             send_response(fd, 400, "application/json",
                           "{\"error\":\"Content-Type must be application/json.\"}");
             return;
         }
+
+        std::unordered_map<std::string, std::string> request_json;
+        if (!parse_request_json_object(request.body, request_json)) {
+            send_response(fd, 400, "application/json",
+                          "{\"error\":\"Malformed JSON body. Only a flat object with string values is supported.\"}");
+            return;
+        }
+
+        const std::string text = trim(request_json["text"]);
+        const std::string url = trim(request_json["url"]);
+        const std::string source = trim(request_json["source"]);
 
         if (text.empty() && url.empty()) {
             send_response(fd, 400, "application/json",

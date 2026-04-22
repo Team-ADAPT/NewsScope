@@ -58,6 +58,21 @@ void test_subdomain_source_lookup() {
     std::cout << "  ✓ Common mobile/amp publisher aliases normalize correctly\n";
 }
 
+void test_news_suffix_is_not_stripped_for_named_publishers() {
+    std::cout << "Testing Publisher Name Collision Handling...\n";
+    SourceValidator validator;
+
+    validator.add_trusted_source("ABC News", 87.0);
+    validator.add_trusted_source("ABC Australia", 90.0);
+
+    const double abc_news = validator.validate_source("ABC News");
+    const double abc_australia = validator.validate_source("ABC Australia");
+
+    assert(abc_news == 87.0);
+    assert(abc_australia == 90.0);
+    std::cout << "  ✓ Distinct publishers no longer collapse into one source key\n";
+}
+
 void test_add_source() {
     std::cout << "Testing Add Source...\n";
     SourceValidator validator;
@@ -121,6 +136,7 @@ int main() {
         test_case_insensitive_lookup();
         test_domain_like_source_lookup();
         test_subdomain_source_lookup();
+        test_news_suffix_is_not_stripped_for_named_publishers();
         
         std::cout << "\n" << std::string(60, '=') << "\n";
         std::cout << "All source validator tests passed! ✓\n";

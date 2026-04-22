@@ -80,7 +80,7 @@ run: $(DEMO_TARGET)
 run-web: $(WEB_TARGET)
 	@echo "\n=== Running NewsScope Web Server ===\n"
 	@echo "Open http://localhost:$${PORT:-8080}"
-	@PORT=$${PORT:-8080} $(WEB_TARGET)
+	@PORT=$${PORT:-8080} NEWSSCOPE_ENABLE_ML=1 NEWSSCOPE_ML_BLEND_WEIGHT=0.25 $(WEB_TARGET)
 
 run-tests: $(TEST_TARGETS)
 	@echo "\n=== Running All Tests ===\n"
