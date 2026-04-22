@@ -28,6 +28,21 @@ std::string join_tokens(const std::vector<std::string>& tokens) {
     return out.str();
 }
 
+bool is_common_prefix_token(const std::string& token) {
+    static const std::set<std::string> prefixes = {
+        "www", "m", "mobile", "amp", "edition"
+    };
+    return prefixes.find(token) != prefixes.end();
+}
+
+bool is_common_suffix_token(const std::string& token) {
+    static const std::set<std::string> suffixes = {
+        "com", "org", "net", "co", "io", "uk", "us", "in", "ca", "au",
+        "news", "media"
+    };
+    return suffixes.find(token) != suffixes.end();
+}
+
 bool token_subset_match(const std::vector<std::string>& input_tokens,
                         const std::vector<std::string>& candidate_tokens) {
     if (input_tokens.empty() || candidate_tokens.empty() ||
@@ -74,14 +89,12 @@ std::string SourceValidator::normalize_source_name(const std::string& source_nam
     }
 
     std::vector<std::string> tokens = split_tokens(normalized);
-    if (!tokens.empty() && tokens.front() == "www") {
+    while (!tokens.empty() && is_common_prefix_token(tokens.front())) {
         tokens.erase(tokens.begin());
     }
     while (tokens.size() > 1) {
         const std::string& tail = tokens.back();
-        if (tail == "com" || tail == "org" || tail == "net" || tail == "co" ||
-            tail == "io" || tail == "uk" || tail == "us" || tail == "in" ||
-            tail == "ca" || tail == "au") {
+        if (is_common_suffix_token(tail)) {
             tokens.pop_back();
             continue;
         }
@@ -96,16 +109,24 @@ std::string SourceValidator::normalize_source_name(const std::string& source_nam
 SourceValidator::SourceValidator() {
     add_trusted_source("BBC", 90.0);
     add_trusted_source("BBC News", 94.0);
+    add_trusted_source("bbc.com", 94.0);
     add_trusted_source("Reuters", 96.0);
+    add_trusted_source("reuters.com", 96.0);
     add_trusted_source("Associated Press", 96.0);
     add_trusted_source("AP", 96.0);
     add_trusted_source("AP News", 96.0);
+    add_trusted_source("apnews.com", 96.0);
     add_trusted_source("The Guardian", 91.0);
     add_trusted_source("NPR", 91.0);
+    add_trusted_source("npr.org", 91.0);
     add_trusted_source("Wall Street Journal", 90.0);
     add_trusted_source("WSJ", 90.0);
+    add_trusted_source("wsj.com", 90.0);
     add_trusted_source("New York Times", 92.0);
     add_trusted_source("NYT", 92.0);
+    add_trusted_source("nytimes.com", 92.0);
+    add_trusted_source("cnn.com", 80.0);
+    add_trusted_source("bloomberg.com", 92.0);
     
     add_untrusted_source("Fake News Daily", 15.0);
     add_untrusted_source("Hoax Report", 10.0);

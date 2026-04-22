@@ -45,6 +45,19 @@ void test_domain_like_source_lookup() {
     std::cout << "  ✓ Domain-like source aliases normalize correctly\n";
 }
 
+void test_subdomain_source_lookup() {
+    std::cout << "Testing Subdomain Source Lookup...\n";
+    SourceValidator validator;
+
+    const double reuters = validator.validate_source("Reuters");
+    const double mobile_reuters = validator.validate_source("mobile.reuters.com");
+    const double amp_nyt = validator.validate_source("amp.nytimes.com");
+
+    assert(reuters == mobile_reuters);
+    assert(amp_nyt >= 90.0);
+    std::cout << "  ✓ Common mobile/amp publisher aliases normalize correctly\n";
+}
+
 void test_add_source() {
     std::cout << "Testing Add Source...\n";
     SourceValidator validator;
@@ -107,6 +120,7 @@ int main() {
         test_source_exists();
         test_case_insensitive_lookup();
         test_domain_like_source_lookup();
+        test_subdomain_source_lookup();
         
         std::cout << "\n" << std::string(60, '=') << "\n";
         std::cout << "All source validator tests passed! ✓\n";

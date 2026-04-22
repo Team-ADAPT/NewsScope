@@ -57,6 +57,9 @@ constexpr size_t MAX_STORED_FINISHED_JOBS = 5000;
 const auto FINISHED_JOB_TTL = std::chrono::minutes(10);
 constexpr size_t MAX_FETCH_RESPONSE_BYTES = 600000;
 constexpr size_t MAX_ANALYSIS_TEXT_BYTES = 20000;
+constexpr size_t MAX_REQUEST_BODY_BYTES = 65536;
+constexpr size_t MAX_SOURCE_BYTES = 160;
+constexpr size_t MAX_PATH_BYTES = 2048;
 
 std::string trim(const std::string& s) {
     const size_t start = s.find_first_not_of(" \t\r\n");
@@ -106,6 +109,89 @@ std::string extract_host_from_url(const std::string& url) {
     return to_lower(url.substr(host_start, host_end - host_start));
 }
 
+bool looks_like_ipv4(const std::string& host) {
+    if (host.empty()) {
+        return false;
+    }
+    for (char c : host) {
+        if (!(std::isdigit(static_cast<unsigned char>(c)) || c == '.')) {
+            return false;
+        }
+    }
+    return host.find('.') != std::string::npos;
+}
+
+bool is_private_ipv4_host(const std::string& host) {
+    if (!looks_like_ipv4(host)) {
+        return false;
+    }
+
+    std::vector<int> octets;
+    std::stringstream ss(host);
+    std::string part;
+    while (std::getline(ss, part, '.')) {
+        if (part.empty() || part.size() > 3) {
+            return false;
+        }
+        const int value = std::atoi(part.c_str());
+        if (value < 0 || value > 255) {
+            return false;
+        }
+        octets.push_back(value);
+    }
+    if (octets.size() != 4) {
+        return false;
+    }
+
+    return octets[0] == 10 ||
+           octets[0] == 127 ||
+           octets[0] == 0 ||
+           (octets[0] == 169 && octets[1] == 254) ||
+           (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+           (octets[0] == 192 && octets[1] == 168) ||
+           (octets[0] == 100 && octets[1] >= 64 && octets[1] <= 127);
+}
+
+bool has_disallowed_host_suffix(const std::string& host) {
+    static const std::vector<std::string> suffixes = {
+        ".local", ".internal", ".lan", ".home", ".home.arpa"
+    };
+    for (const auto& suffix : suffixes) {
+        if (host.size() >= suffix.size() &&
+            host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool has_userinfo_in_url(const std::string& url) {
+    const size_t scheme_sep = url.find("://");
+    if (scheme_sep == std::string::npos) {
+        return false;
+    }
+    const size_t authority_start = scheme_sep + 3;
+    const size_t authority_end = url.find_first_of("/?#", authority_start);
+    const std::string authority = url.substr(authority_start, authority_end - authority_start);
+    return authority.find('@') != std::string::npos;
+}
+
+bool is_reasonable_http_method(const std::string& method) {
+    return method == "GET" || method == "POST";
+}
+
+bool is_reasonable_path(const std::string& path) {
+    if (path.empty() || path.size() > MAX_PATH_BYTES || path[0] != '/') {
+        return false;
+    }
+    for (unsigned char c : path) {
+        if (c < 32 || c == 127) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool is_allowed_http_url(const std::string& raw_url) {
     const std::string url = trim(raw_url);
     if (url.empty() || url.size() > 2048 || has_invalid_url_characters(url)) {
@@ -116,6 +202,9 @@ bool is_allowed_http_url(const std::string& raw_url) {
     if (!(lower.rfind("http://", 0) == 0 || lower.rfind("https://", 0) == 0)) {
         return false;
     }
+    if (has_userinfo_in_url(url)) {
+        return false;
+    }
 
     const std::string host = extract_host_from_url(lower);
     if (host.empty()) {
@@ -123,6 +212,9 @@ bool is_allowed_http_url(const std::string& raw_url) {
     }
     if (host == "localhost" || host == "::1" ||
         host.rfind("127.", 0) == 0 || host.rfind("0.", 0) == 0) {
+        return false;
+    }
+    if (is_private_ipv4_host(host) || has_disallowed_host_suffix(host)) {
         return false;
     }
 
@@ -558,6 +650,9 @@ bool fetch_url_payload(const std::string& url, std::string& payload, std::string
             "--silent",
             "--show-error",
             "--fail",
+            "--proto", "=http,https",
+            "--proto-redir", "=http,https",
+            "--max-redirs", "4",
             "--max-time", "18",
             "--connect-timeout", "7",
             "--compressed",
@@ -707,7 +802,12 @@ void send_response(int fd, int code, const std::string& content_type, const std:
     response << "Content-Type: " << content_type << "\r\n";
     response << "Content-Length: " << body.size() << "\r\n";
     response << "Connection: close\r\n";
-    response << "Cache-Control: no-store\r\n\r\n";
+    response << "Cache-Control: no-store\r\n";
+    response << "X-Content-Type-Options: nosniff\r\n";
+    response << "X-Frame-Options: DENY\r\n";
+    response << "Referrer-Policy: no-referrer\r\n";
+    response << "Cross-Origin-Resource-Policy: same-origin\r\n";
+    response << "Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\n\r\n";
     response << body;
     (void)send_all(fd, response.str());
 }
@@ -792,6 +892,9 @@ bool parse_http_request(const std::string& raw, HttpRequest& request) {
     if (request.method.empty() || request.path.empty()) {
         return false;
     }
+    if (!is_reasonable_http_method(request.method) || !is_reasonable_path(request.path)) {
+        return false;
+    }
 
     size_t query_pos = request.path.find('?');
     if (query_pos != std::string::npos) {
@@ -811,6 +914,9 @@ bool parse_http_request(const std::string& raw, HttpRequest& request) {
     }
 
     request.body = raw.substr(header_end + 4);
+    if (request.body.size() > MAX_REQUEST_BODY_BYTES) {
+        return false;
+    }
     return true;
 }
 
@@ -1103,9 +1209,27 @@ private:
         const std::string url = trim(extract_json_string(request.body, "url"));
         const std::string source = trim(extract_json_string(request.body, "source"));
 
+        const auto content_type_it = request.headers.find("content-type");
+        if (content_type_it == request.headers.end() ||
+            content_type_it->second.find("application/json") == std::string::npos) {
+            send_response(fd, 400, "application/json",
+                          "{\"error\":\"Content-Type must be application/json.\"}");
+            return;
+        }
+
         if (text.empty() && url.empty()) {
             send_response(fd, 400, "application/json",
                           "{\"error\":\"Missing input. Send JSON with text or url: {\\\"text\\\":\\\"...\\\",\\\"url\\\":\\\"https://...\\\",\\\"source\\\":\\\"...\\\"}\"}");
+            return;
+        }
+        if (text.size() > MAX_ANALYSIS_TEXT_BYTES) {
+            send_response(fd, 400, "application/json",
+                          "{\"error\":\"Input text is too large.\"}");
+            return;
+        }
+        if (source.size() > MAX_SOURCE_BYTES) {
+            send_response(fd, 400, "application/json",
+                          "{\"error\":\"Source field is too large.\"}");
             return;
         }
 

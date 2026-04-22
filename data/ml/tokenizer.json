@@ -1,0 +1,1 @@
+{"model_type": "tfidf_logreg_v3", "trained_examples": 102, "credible_examples": 26, "non_credible_examples": 76, "source": "data/articles.json", "max_features": 5000, "class_weight": "balanced", "version": 3}

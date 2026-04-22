@@ -52,5 +52,6 @@
 __pycache__/
 *.pyc
 !ml/model_inference.py
-/data/ml/
-
+data/ml/*
+!data/ml/tfidf_logreg.joblib
+!data/ml/tokenizer.json
