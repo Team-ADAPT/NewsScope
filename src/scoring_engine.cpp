@@ -463,9 +463,10 @@ void ScoringEngine::initialize(const std::string& sources_csv,
         frequency_analyzer->load_negative_terms_from_file(resolved_negative_terms);
     }
 
-    ml_enabled = env_flag_enabled("NEWSSCOPE_ENABLE_ML", true);
-    // Proposal-aligned default: deterministic score dominates with a 75/25 split.
-    ml_blend_weight = clamp_score(env_double_or_default("NEWSSCOPE_ML_BLEND_WEIGHT", 0.25), 0.0, 1.0);
+    // ML inference is opt-in because the deterministic engine is the default
+    // fast path and the ML overlay incurs Python process startup overhead.
+    ml_enabled = env_flag_enabled("NEWSSCOPE_ENABLE_ML", false);
+    ml_blend_weight = clamp_score(env_double_or_default("NEWSSCOPE_ML_BLEND_WEIGHT", 0.0), 0.0, 1.0);
 
     const char* model_path_env = std::getenv("NEWSSCOPE_ML_MODEL_PATH");
     const char* tokenizer_path_env = std::getenv("NEWSSCOPE_ML_TOKENIZER_PATH");
@@ -731,12 +732,15 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
         {"greedy_filtering",   local_scores.greedy_score},
         {"claim_verifiability",local_scores.claim_verifiability_score}
     };
+    last_module_scores = result.module_scores;
     result.explanations = std::move(local_explanations);
+    last_explanations = result.explanations;
     if (risk_penalty > 0.0 || consistency_boost > 0.0) {
         std::stringstream calibration_msg;
         calibration_msg << "Risk calibration applied (penalty: " << risk_penalty
                         << ", boost: " << consistency_boost << ")";
         result.explanations.push_back("[Score Calibration] " + calibration_msg.str());
+        last_explanations = result.explanations;
     }
 
     if (ml_enabled) {
@@ -759,6 +763,7 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
                    << "%, derived credibility: " << ml_credibility_score
                    << "/100 - " << ml.details;
             result.explanations.push_back("[ML Model] " + ml_msg.str());
+            last_explanations = result.explanations;
 
             if (ml_blend_weight > 0.0) {
                 const double deterministic_score = result.deterministic_score;
@@ -788,6 +793,7 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
                                << ", deterministic: " << deterministic_score
                                << ", ML-derived: " << ml_credibility_score << ")";
                     result.explanations.push_back("[ML Fusion] " + fusion_msg.str());
+                    last_explanations = result.explanations;
                 } else {
                     std::stringstream fusion_msg;
                     fusion_msg << std::fixed << std::setprecision(2)
@@ -795,10 +801,12 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
                                << (ml_confidence * 100.0)
                                << "%; gate: " << (ML_CONFIDENCE_GATE * 100.0) << "%)";
                     result.explanations.push_back("[ML Fusion] " + fusion_msg.str());
+                    last_explanations = result.explanations;
                 }
             }
         } else {
             result.explanations.push_back("[ML Model] Inference unavailable: " + ml.error);
+            last_explanations = result.explanations;
         }
     }
 
@@ -841,22 +849,26 @@ void ScoringEngine::set_module_weights(double preprocessing_weight,
 // get_module_scores() and get_explanations() are superseded by CredibilityResult fields.
 // Kept for API compatibility; callers should use assess_article() return value instead.
 std::unordered_map<std::string, double> ScoringEngine::get_module_scores() const {
-    return {};
+    std::lock_guard<std::mutex> lock(assess_mutex);
+    return last_module_scores;
 }
 
 std::vector<std::string> ScoringEngine::get_explanations() const {
-    return {};
+    std::lock_guard<std::mutex> lock(assess_mutex);
+    return last_explanations;
 }
 
 void ScoringEngine::reset() {
     std::lock_guard<std::mutex> lock(assess_mutex);
     initialized_resources = false;
     ml_enabled = false;
-    ml_blend_weight = 0.25;
+    ml_blend_weight = 0.0;
     ml_model_path.clear();
     ml_tokenizer_path.clear();
     ml_inference_script_path.clear();
     ml_articles_path.clear();
+    last_module_scores.clear();
+    last_explanations.clear();
     preprocessor    = std::make_unique<Preprocessor>();
     source_validator= std::make_unique<SourceValidator>();
     phrase_indexer  = std::make_unique<PhraseIndexer>();

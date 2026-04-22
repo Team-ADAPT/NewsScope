@@ -248,11 +248,13 @@ NewsScope currently includes:
 - a local web application
 - test and benchmark tooling
 - repository branch protection on active branches
-- optional local TF-IDF + Logistic Regression inference (auto-enabled when model/script or training data is available)
+- optional local TF-IDF + Logistic Regression inference (disabled by default; opt in with an environment variable)
 
 ## Optional ML Overlay
 
 The deterministic scoring pipeline remains the primary credibility engine.  
+ML is opt-in because the deterministic path is the default low-latency runtime.
+
 When ML is enabled, NewsScope uses confidence-gated blending:
 
 `Final Score = 0.75 * deterministic_score + 0.25 * ml_score`
@@ -263,8 +265,8 @@ The ML side uses Python + scikit-learn (`TF-IDF` + `LogisticRegression`) via `ml
 
 Environment controls:
 
-- `NEWSSCOPE_ENABLE_ML=0` disables model inference
-- `NEWSSCOPE_ML_BLEND_WEIGHT=0.0..1.0` blends deterministic and ML-derived scores (default `0.25`)
+- `NEWSSCOPE_ENABLE_ML=1` enables model inference
+- `NEWSSCOPE_ML_BLEND_WEIGHT=0.0..1.0` blends deterministic and ML-derived scores (default `0.0`)
 - `NEWSSCOPE_ML_TOKENIZER_PATH=<path>` overrides tokenizer artifact path (default `data/ml/tokenizer.json`)
 - `NEWSSCOPE_ML_MODEL_PATH=<path>` overrides the serialized model path (default `data/ml/tfidf_logreg.joblib`)
 

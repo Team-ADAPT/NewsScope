@@ -254,6 +254,34 @@ void test_explanations() {
     }
 }
 
+void test_legacy_getters_return_last_result() {
+    std::cout << "Testing Legacy Getter Compatibility...\n";
+    ScoringEngine engine;
+    engine.initialize();
+
+    Article article("compat", "Title", "Body text here", "BBC");
+    auto result = engine.assess_article(article);
+
+    const auto module_scores = engine.get_module_scores();
+    const auto explanations = engine.get_explanations();
+
+    assert(module_scores == result.module_scores);
+    assert(explanations == result.explanations);
+    std::cout << "  ✓ Legacy getters mirror the last assessment result\n";
+}
+
+void test_ml_is_opt_in_by_default() {
+    std::cout << "Testing ML Default Mode...\n";
+    ScoringEngine engine;
+    engine.initialize();
+
+    Article article("ml-default", "Title", "Body text here", "BBC");
+    auto result = engine.assess_article(article);
+
+    assert(result.ml_score < 0.0);
+    std::cout << "  ✓ ML overlay is disabled by default\n";
+}
+
 void test_processing_time() {
     std::cout << "Testing Processing Time...\n";
     ScoringEngine engine;
@@ -286,6 +314,8 @@ int main() {
         test_module_scores();
         test_custom_weights();
         test_explanations();
+        test_legacy_getters_return_last_result();
+        test_ml_is_opt_in_by_default();
         test_processing_time();
         
         std::cout << "\n" << std::string(60, '=') << "\n";

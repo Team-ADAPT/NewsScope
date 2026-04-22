@@ -46,6 +46,9 @@ public:
     ClaimVerifier& get_claim_verifier() { return *claim_verifier; }
     
 private:
+    std::unordered_map<std::string, double> last_module_scores;
+    std::vector<std::string> last_explanations;
+
     std::unique_ptr<Preprocessor> preprocessor;
     std::unique_ptr<SourceValidator> source_validator;
     std::unique_ptr<PhraseIndexer> phrase_indexer;
@@ -71,7 +74,7 @@ private:
     bool initialized_resources = false;
 
     bool ml_enabled = false;
-    double ml_blend_weight = 0.25;
+    double ml_blend_weight = 0.0;
     std::string ml_model_path;
     std::string ml_tokenizer_path;
     std::string ml_inference_script_path;
