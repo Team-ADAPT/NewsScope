@@ -51,3 +51,6 @@
 *.py
 __pycache__/
 *.pyc
+!ml/model_inference.py
+/data/ml/
+

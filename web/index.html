@@ -53,21 +53,41 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">Input</p>
-              <h2>Submit article text</h2>
+              <h2>Submit article text or link</h2>
             </div>
             <span class="panel-pill">Ctrl + Enter</span>
           </div>
 
           <form id="analyze-form" aria-label="News analysis form">
-            <label for="text-input">Headline and body</label>
-            <textarea
-              id="text-input"
-              name="text"
-              placeholder="Paste the headline on the first line, then the body text below."
-              required
-              aria-describedby="text-hint"
-            ></textarea>
-            <small id="text-hint" class="hint">The first line is treated as the headline. Everything below it becomes the body.</small>
+            <div class="input-tabs" role="tablist" aria-label="Input mode">
+              <button id="tab-text" class="input-tab-btn active" type="button" role="tab" aria-selected="true" aria-controls="panel-text">Text</button>
+              <button id="tab-link" class="input-tab-btn" type="button" role="tab" aria-selected="false" aria-controls="panel-link">Link</button>
+            </div>
+
+            <section id="panel-text" class="input-tab-panel active" role="tabpanel" aria-labelledby="tab-text">
+              <label for="text-input">Headline and body</label>
+              <textarea
+                id="text-input"
+                name="text"
+                placeholder="Paste the headline on the first line, then the body text below."
+                aria-describedby="text-hint"
+              ></textarea>
+              <small id="text-hint" class="hint">The first line is treated as the headline. Everything below it becomes the body.</small>
+            </section>
+
+            <section id="panel-link" class="input-tab-panel" role="tabpanel" aria-labelledby="tab-link" hidden>
+              <label for="url-input">Article URL</label>
+              <input
+                id="url-input"
+                name="url"
+                type="url"
+                placeholder="https://example.com/news/story"
+                aria-describedby="url-hint"
+              />
+              <small id="url-hint" class="hint">
+                NewsScope fetches the page and extracts headline + primary article paragraphs before analysis.
+              </small>
+            </section>
 
             <div class="input-grid">
               <div class="field">

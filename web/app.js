@@ -14,11 +14,17 @@ const scoreNumber = document.getElementById("score-number");
 const scoreRingFill = document.getElementById("score-ring-fill");
 const scoreCircle = document.getElementById("score-circle");
 
+const tabTextBtn = document.getElementById("tab-text");
+const tabLinkBtn = document.getElementById("tab-link");
+const panelText = document.getElementById("panel-text");
+const panelLink = document.getElementById("panel-link");
 const textInput = document.getElementById("text-input");
+const urlInput = document.getElementById("url-input");
 const sourceInput = document.getElementById("source-input");
 
 const CIRCUMFERENCE = 2 * Math.PI * 54;
 let scoreAnimationFrame = null;
+let activeInputMode = "text";
 
 function normalizeScore(value) {
   const numeric = Number(value);
@@ -187,6 +193,11 @@ function renderModules(modules) {
 
 function renderResult(data) {
   const score = normalizeScore(data.score);
+  const deterministicScore = normalizeScore(data.deterministic_score);
+  const mlScore =
+    data.ml_score === null || data.ml_score === undefined
+      ? null
+      : normalizeScore(data.ml_score);
   const modules = data.module_scores || {};
 
   scoreRingFill.classList.remove("high", "medium", "low");
@@ -219,15 +230,53 @@ function renderResult(data) {
   }
 
   const processingTime = data.processing_ms ?? 0;
-  resultMeta.textContent = `Processing time ${processingTime}ms • ${Object.keys(modules).length} module signals reviewed`;
+  const metaParts = [
+    `Processing time ${processingTime}ms`,
+    `${Object.keys(modules).length} module signals reviewed`,
+    `Deterministic ${deterministicScore.toFixed(0)}/100`,
+  ];
+  if (mlScore !== null) {
+    metaParts.push(`ML ${mlScore.toFixed(0)}/100`);
+  }
+  resultMeta.textContent = metaParts.join(" • ");
 
   buildInsights(modules, score);
+  if (mlScore !== null) {
+    resultInsights.appendChild(createInsightCard("ML Model", `${mlScore.toFixed(0)}/100`, getScoreClass(mlScore)));
+  }
+  resultInsights.appendChild(
+    createInsightCard("Deterministic Core", `${deterministicScore.toFixed(0)}/100`, getScoreClass(deterministicScore)),
+  );
   renderModules(modules);
   renderExplanations(data.explanations || []);
 
   emptyState.classList.add("hidden");
   resultBox.classList.remove("hidden");
 }
+
+function setInputMode(mode) {
+  const isText = mode === "text";
+  activeInputMode = isText ? "text" : "link";
+
+  tabTextBtn.classList.toggle("active", isText);
+  tabTextBtn.setAttribute("aria-selected", isText ? "true" : "false");
+  panelText.classList.toggle("active", isText);
+  panelText.hidden = !isText;
+
+  tabLinkBtn.classList.toggle("active", !isText);
+  tabLinkBtn.setAttribute("aria-selected", !isText ? "true" : "false");
+  panelLink.classList.toggle("active", !isText);
+  panelLink.hidden = isText;
+
+  if (isText) {
+    textInput.focus();
+  } else {
+    urlInput.focus();
+  }
+}
+
+tabTextBtn.addEventListener("click", () => setInputMode("text"));
+tabLinkBtn.addEventListener("click", () => setInputMode("link"));
 
 async function pollJob(jobId) {
   const pollIntervalMs = 650;
@@ -274,22 +323,46 @@ form.addEventListener("submit", async (event) => {
   clearResult();
 
   const text = textInput.value.trim();
+  const url = urlInput.value.trim();
   const source = sourceInput.value.trim();
 
-  if (!text) {
-    showStatus("Please enter text to analyze.", "error");
-    return;
+  if (activeInputMode === "text") {
+    if (!text) {
+      showStatus("Please enter article text to analyze.", "error");
+      return;
+    }
+  } else {
+    if (!url) {
+      showStatus("Please enter a URL to analyze.", "error");
+      return;
+    }
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        showStatus("Only http/https links are supported.", "error");
+        return;
+      }
+    } catch (_) {
+      showStatus("Please enter a valid URL.", "error");
+      return;
+    }
   }
 
   submitBtn.disabled = true;
   submitBtn.innerHTML = '<span class="btn-icon">Working</span>';
-  showStatus("Submitting article for analysis...");
+  showStatus(activeInputMode === "link"
+    ? "Fetching article from link and starting analysis..."
+    : "Submitting article for analysis...");
 
   try {
+    const payload = activeInputMode === "link"
+      ? { text: "", url, source }
+      : { text, url: "", source };
+
     const res = await fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, source }),
+      body: JSON.stringify(payload),
     });
 
     const data = await res.json();
@@ -310,6 +383,13 @@ form.addEventListener("submit", async (event) => {
 });
 
 textInput.addEventListener("keydown", (event) => {
+  if (event.ctrlKey && event.key === "Enter") {
+    event.preventDefault();
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+  }
+});
+
+urlInput.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key === "Enter") {
     event.preventDefault();
     form.dispatchEvent(new Event("submit", { cancelable: true }));

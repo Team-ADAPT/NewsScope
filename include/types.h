@@ -24,7 +24,9 @@ struct Article {
 };
 
 struct CredibilityResult {
-    double overall_score;
+    double overall_score = 0.0;
+    double deterministic_score = 0.0;
+    double ml_score = -1.0;
     std::unordered_map<std::string, double> module_scores;
     std::vector<std::string> explanations;
     std::chrono::milliseconds processing_time;

@@ -11,8 +11,11 @@
    - Frequency anomaly detection
    - Temporal spike analysis
    - Greedy clickbait/manipulation filtering
-4. Combine with weighted scoring (default equal weights)
-5. Return `CredibilityResult{score, module_scores, explanations, latency}`
+4. Compute deterministic credibility score from algorithmic modules
+5. Optionally blend with ML enhancement (`TF-IDF + Logistic Regression`) as:
+   `Final = 0.75 * deterministic + 0.25 * ml`
+   (blend is confidence-gated to avoid low-confidence ML drift)
+6. Return `CredibilityResult{score, module_scores, explanations, latency}`
 
 ## Components
 - `Preprocessor`: O(n) text pipeline

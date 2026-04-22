@@ -274,6 +274,11 @@ void print_result(const CredibilityResult& result, const std::string& article_id
     
     std::cout << "Overall Credibility Score: " << std::fixed << std::setprecision(2)
               << result.overall_score << "/100\n\n";
+    std::cout << "Deterministic Score: " << result.deterministic_score << "/100\n";
+    if (result.ml_score >= 0.0) {
+        std::cout << "ML Model Score: " << result.ml_score << "/100\n";
+    }
+    std::cout << "\n";
     
     std::cout << "Module Scores:\n";
     for (const auto& [module, score] : result.module_scores) {

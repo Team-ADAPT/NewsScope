@@ -1,9 +1,17 @@
 #include "scoring_engine.h"
 #include "utils.h"
+#include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
+#include <iomanip>
+#include <iterator>
 #include <sstream>
 #include <unordered_set>
 #include <cmath>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace {
 
@@ -43,7 +51,6 @@ constexpr double LOW_SOURCE_CREDIBILITY_THRESHOLD = 35.0;
 constexpr double MEDIUM_SOURCE_CREDIBILITY_THRESHOLD = 50.0;
 constexpr double HIGH_SOURCE_THRESHOLD = 75.0;
 constexpr double LOW_CLAIM_VERIFIABILITY_THRESHOLD = 40.0;
-constexpr double MODERATE_CLAIM_THRESHOLD = 50.0;
 constexpr double MANIPULATION_THRESHOLD = 25.0;
 constexpr double SUSPICION_THRESHOLD = 60.0;
 
@@ -62,17 +69,25 @@ constexpr double CONSISTENCY_BOOST_FACTUAL = 3.5;
 constexpr double CONSISTENCY_BOOST_HIGH_CLAIM = 1.5;
 constexpr double CONSISTENCY_BOOST_CLEAN_RECORD = 2.5;
 constexpr double CONSISTENCY_BOOST_TRUSTED_SOURCE = 2.0;
+constexpr double CONSISTENCY_BOOST_GROUNDED_UNKNOWN_SOURCE = 2.5;
 constexpr double MAX_CONSISTENCY_BOOST = 7.0;              // hard cap on total boost
 
 // Score combination weights — weights must sum to 1.0
-constexpr double SOURCE_WEIGHT = 0.36;      // source DB is most reliable signal
-constexpr double CLAIM_WEIGHT = 0.30;       // heuristic-only, keep influence moderate
-constexpr double PREPROCESSING_WEIGHT = 0.17;
-constexpr double DETECTION_WEIGHT = 0.17;
+constexpr double SOURCE_WEIGHT = 0.30;
+constexpr double CLAIM_WEIGHT = 0.34;
+constexpr double PREPROCESSING_WEIGHT = 0.18;
+constexpr double DETECTION_WEIGHT = 0.18;
 
 // Risk adjustment: detection avg above/below 75 nudges final score slightly
 constexpr double RISK_ADJUSTMENT_CENTER = 75.0;
 constexpr double RISK_ADJUSTMENT_MULTIPLIER = 0.15;  // reduced: detection shouldn't dominate
+
+// ML fusion safety: avoid low-confidence ML outputs dragging strong deterministic assessments.
+constexpr double ML_CONFIDENCE_GATE = 0.20;
+constexpr double ML_CONFIDENCE_SCALER = 1.25;
+constexpr double ML_LOW_CONFIDENCE_DOWNWEIGHT = 0.25;
+constexpr double ML_HIGH_DETERMINISTIC_FLOOR = 75.0;
+constexpr double ML_DOWNWARD_SHIFT_CAP = 6.0;
 
 using newsscope::utils::clamp_score;
 using newsscope::utils::to_lower_copy;
@@ -143,6 +158,209 @@ std::string resolve_default_data_file(const std::string& filename) {
         }
     }
     return "";
+}
+
+std::string resolve_project_file(const std::string& path) {
+    const std::vector<std::string> candidates = {
+        path,
+        "./" + path,
+        "../" + path,
+        "../../" + path
+    };
+    for (const auto& candidate : candidates) {
+        std::ifstream in(candidate);
+        if (in.is_open()) {
+            return candidate;
+        }
+    }
+    return "";
+}
+
+bool env_flag_enabled(const char* name, bool default_value) {
+    const char* raw = std::getenv(name);
+    if (!raw) {
+        return default_value;
+    }
+    const std::string value = to_lower_copy(raw);
+    return !(value == "0" || value == "false" || value == "no" || value == "off");
+}
+
+double env_double_or_default(const char* name, double default_value) {
+    const char* raw = std::getenv(name);
+    if (!raw || *raw == '\0') {
+        return default_value;
+    }
+    char* end = nullptr;
+    const double value = std::strtod(raw, &end);
+    if (end == raw) {
+        return default_value;
+    }
+    return value;
+}
+
+std::string trim_copy(const std::string& value) {
+    const size_t start = value.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) {
+        return "";
+    }
+    const size_t end = value.find_last_not_of(" \t\r\n");
+    return value.substr(start, end - start + 1);
+}
+
+bool write_temp_text_file(const std::string& text, std::string& out_path) {
+    char templ[] = "/tmp/newsscope_ml_XXXXXX";
+    const int fd = mkstemp(templ);
+    if (fd < 0) {
+        return false;
+    }
+    out_path = templ;
+    const ssize_t written = write(fd, text.data(), text.size());
+    close(fd);
+    return written == static_cast<ssize_t>(text.size());
+}
+
+std::string read_fd_to_string(int fd) {
+    std::array<char, 512> buffer{};
+    std::string output;
+
+    while (true) {
+        const ssize_t bytes_read = read(fd, buffer.data(), buffer.size());
+        if (bytes_read <= 0) {
+            break;
+        }
+        output.append(buffer.data(), static_cast<size_t>(bytes_read));
+    }
+
+    return output;
+}
+
+struct MlInferenceResult {
+    bool ok = false;
+    double probability = 0.0;
+    std::string details;
+    std::string error;
+};
+
+MlInferenceResult parse_ml_output(const std::string& output) {
+    MlInferenceResult result;
+    const std::string line = trim_copy(output);
+
+    if (line.rfind("OK|", 0) == 0) {
+        const size_t first = line.find('|', 3);
+        if (first == std::string::npos) {
+            result.error = "Malformed ML output";
+            return result;
+        }
+        const std::string probability_str = line.substr(3, first - 3);
+        const std::string details = line.substr(first + 1);
+        char* end = nullptr;
+        const double probability = std::strtod(probability_str.c_str(), &end);
+        if (end == probability_str.c_str()) {
+            result.error = "Invalid ML probability";
+            return result;
+        }
+        result.ok = true;
+        result.probability = probability;
+        result.details = details.empty() ? "tokenizer" : details;
+        return result;
+    }
+
+    if (line.rfind("ERR|", 0) == 0) {
+        result.error = line.substr(4);
+        return result;
+    }
+
+    result.error = line.empty() ? "No ML output" : line;
+    return result;
+}
+
+MlInferenceResult run_ml_inference(const std::string& script_path,
+                                   const std::string& model_path,
+                                   const std::string& tokenizer_path,
+                                   const std::string& articles_path,
+                                   const std::string& text) {
+    MlInferenceResult result;
+
+    if (script_path.find('\0') != std::string::npos ||
+        model_path.find('\0') != std::string::npos ||
+        tokenizer_path.find('\0') != std::string::npos ||
+        articles_path.find('\0') != std::string::npos) {
+        result.error = "Invalid ML path configuration";
+        return result;
+    }
+
+    std::string temp_text_path;
+    if (!write_temp_text_file(text, temp_text_path)) {
+        result.error = "Could not create ML input file";
+        return result;
+    }
+
+    int pipe_fds[2];
+    if (pipe(pipe_fds) != 0) {
+        std::remove(temp_text_path.c_str());
+        result.error = "Could not create ML output pipe";
+        return result;
+    }
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        close(pipe_fds[0]);
+        close(pipe_fds[1]);
+        std::remove(temp_text_path.c_str());
+        result.error = "Could not fork ML process";
+        return result;
+    }
+
+    if (pid == 0) {
+        dup2(pipe_fds[1], STDOUT_FILENO);
+        dup2(pipe_fds[1], STDERR_FILENO);
+        close(pipe_fds[0]);
+        close(pipe_fds[1]);
+
+        std::vector<std::string> arg_storage = {
+            "python3",
+            script_path,
+            "--model",
+            model_path,
+            "--tokenizer",
+            tokenizer_path,
+            "--text-file",
+            temp_text_path
+        };
+        if (!articles_path.empty()) {
+            arg_storage.push_back("--articles");
+            arg_storage.push_back(articles_path);
+        }
+
+        std::vector<char*> argv;
+        argv.reserve(arg_storage.size() + 1);
+        for (std::string& arg : arg_storage) {
+            argv.push_back(arg.data());
+        }
+        argv.push_back(nullptr);
+
+        execvp("python3", argv.data());
+        _exit(127);
+    }
+
+    close(pipe_fds[1]);
+    const std::string output = read_fd_to_string(pipe_fds[0]);
+    close(pipe_fds[0]);
+
+    int status = 0;
+    int exit_code = -1;
+    if (waitpid(pid, &status, 0) >= 0 && WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);
+    }
+    std::remove(temp_text_path.c_str());
+
+    result = parse_ml_output(output);
+    if (!result.ok && exit_code != 0) {
+        if (result.error.empty() || result.error == "No ML output") {
+            result.error = "ML process failed (exit code " + std::to_string(exit_code) + ")";
+        }
+    }
+    return result;
 }
 
 const std::vector<std::string>& default_suspicious_phrases() {
@@ -244,10 +462,47 @@ void ScoringEngine::initialize(const std::string& sources_csv,
     if (!resolved_negative_terms.empty()) {
         frequency_analyzer->load_negative_terms_from_file(resolved_negative_terms);
     }
+
+    ml_enabled = env_flag_enabled("NEWSSCOPE_ENABLE_ML", true);
+    // Proposal-aligned default: deterministic score dominates with a 75/25 split.
+    ml_blend_weight = clamp_score(env_double_or_default("NEWSSCOPE_ML_BLEND_WEIGHT", 0.25), 0.0, 1.0);
+
+    const char* model_path_env = std::getenv("NEWSSCOPE_ML_MODEL_PATH");
+    const char* tokenizer_path_env = std::getenv("NEWSSCOPE_ML_TOKENIZER_PATH");
+    const char* script_path_env = std::getenv("NEWSSCOPE_ML_SCRIPT_PATH");
+    const char* articles_path_env = std::getenv("NEWSSCOPE_ML_ARTICLES_PATH");
+
+    ml_model_path = (model_path_env && *model_path_env)
+        ? std::string(model_path_env)
+        : resolve_project_file("data/ml/tfidf_logreg.joblib");
+    if (ml_model_path.empty()) {
+        ml_model_path = "data/ml/tfidf_logreg.joblib";
+    }
+    ml_tokenizer_path = (tokenizer_path_env && *tokenizer_path_env)
+        ? std::string(tokenizer_path_env)
+        : "data/ml/tokenizer.json";
+    ml_inference_script_path = (script_path_env && *script_path_env)
+        ? std::string(script_path_env)
+        : resolve_project_file("ml/model_inference.py");
+    ml_articles_path = (articles_path_env && *articles_path_env)
+        ? std::string(articles_path_env)
+        : resolve_default_data_file("articles.json");
+
+    if (ml_enabled) {
+        std::ifstream model_stream(ml_model_path);
+        std::ifstream script_stream(ml_inference_script_path);
+        std::ifstream articles_stream(ml_articles_path);
+        const bool has_serialized_model = model_stream.is_open();
+        const bool can_train_from_articles = articles_stream.is_open();
+        ml_enabled = script_stream.is_open() && (has_serialized_model || can_train_from_articles);
+    }
+
     initialized_resources = true;
 }
 
 CredibilityResult ScoringEngine::assess_article(const Article& article) {
+    std::lock_guard<std::mutex> lock(assess_mutex);
+
     CredibilityResult result;
     ModuleScores local_scores;
     std::vector<std::string> local_explanations;
@@ -433,6 +688,13 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     if (local_scores.source_score >= HIGH_SOURCE_THRESHOLD) {
         consistency_boost += CONSISTENCY_BOOST_TRUSTED_SOURCE;
     }
+    if (local_scores.source_score <= MEDIUM_SOURCE_CREDIBILITY_THRESHOLD &&
+        local_scores.claim_verifiability_score >= 70.0 &&
+        factual_hits >= 1 &&
+        uncertainty_hits == 0 &&
+        low_risk_structure) {
+        consistency_boost += CONSISTENCY_BOOST_GROUNDED_UNKNOWN_SOURCE;
+    }
     // Hard cap: no article should reach 100 purely from boosts
     consistency_boost = std::min(consistency_boost, MAX_CONSISTENCY_BOOST);
 
@@ -457,6 +719,7 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     const double combined = credibility_core + risk_adjustment;
 
     result.overall_score = clamp_score(combined - risk_penalty + consistency_boost, 0.0, 97.0);
+    result.deterministic_score = result.overall_score;
     result.module_scores = {
         {"preprocessing",      local_scores.preprocessing_score},
         {"source_validation",  local_scores.source_score},
@@ -475,6 +738,70 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
                         << ", boost: " << consistency_boost << ")";
         result.explanations.push_back("[Score Calibration] " + calibration_msg.str());
     }
+
+    if (ml_enabled) {
+        const MlInferenceResult ml = run_ml_inference(
+            ml_inference_script_path,
+            ml_model_path,
+            ml_tokenizer_path,
+            ml_articles_path,
+            combined_text
+        );
+
+        if (ml.ok) {
+            // The ML script returns probability of credible/real class.
+            const double ml_credibility_score = clamp_score(ml.probability * 100.0);
+            result.ml_score = ml_credibility_score;
+
+            std::stringstream ml_msg;
+            ml_msg << std::fixed << std::setprecision(2)
+                   << "Credible-class probability: " << (ml.probability * 100.0)
+                   << "%, derived credibility: " << ml_credibility_score
+                   << "/100 - " << ml.details;
+            result.explanations.push_back("[ML Model] " + ml_msg.str());
+
+            if (ml_blend_weight > 0.0) {
+                const double deterministic_score = result.deterministic_score;
+                const double ml_confidence = std::min(1.0, std::abs((ml.probability - 0.5) * 2.0));
+                if (ml_confidence >= ML_CONFIDENCE_GATE) {
+                    double effective_weight =
+                        ml_blend_weight * std::min(1.0, ml_confidence * ML_CONFIDENCE_SCALER);
+                    if (deterministic_score >= ML_HIGH_DETERMINISTIC_FLOOR &&
+                        ml_credibility_score < deterministic_score &&
+                        ml_confidence < 0.50) {
+                        effective_weight *= ML_LOW_CONFIDENCE_DOWNWEIGHT;
+                    }
+
+                    const double blended_score =
+                        ((1.0 - effective_weight) * deterministic_score) +
+                        (effective_weight * ml_credibility_score);
+                    const double protected_score = (deterministic_score >= ML_HIGH_DETERMINISTIC_FLOOR)
+                        ? std::max(blended_score, deterministic_score - ML_DOWNWARD_SHIFT_CAP)
+                        : blended_score;
+                    result.overall_score = clamp_score(protected_score, 0.0, 97.0);
+
+                    std::stringstream fusion_msg;
+                    fusion_msg << std::fixed << std::setprecision(2)
+                               << "Applied blend weight " << effective_weight
+                               << " (configured: " << ml_blend_weight
+                               << ", confidence: " << (ml_confidence * 100.0) << "%"
+                               << ", deterministic: " << deterministic_score
+                               << ", ML-derived: " << ml_credibility_score << ")";
+                    result.explanations.push_back("[ML Fusion] " + fusion_msg.str());
+                } else {
+                    std::stringstream fusion_msg;
+                    fusion_msg << std::fixed << std::setprecision(2)
+                               << "Skipped ML blend due to low confidence ("
+                               << (ml_confidence * 100.0)
+                               << "%; gate: " << (ML_CONFIDENCE_GATE * 100.0) << "%)";
+                    result.explanations.push_back("[ML Fusion] " + fusion_msg.str());
+                }
+            }
+        } else {
+            result.explanations.push_back("[ML Model] Inference unavailable: " + ml.error);
+        }
+    }
+
     auto end_time = std::chrono::high_resolution_clock::now();
     result.processing_time = std::chrono::duration_cast<std::chrono::milliseconds>(
         end_time - start_time
@@ -524,6 +851,12 @@ std::vector<std::string> ScoringEngine::get_explanations() const {
 void ScoringEngine::reset() {
     std::lock_guard<std::mutex> lock(assess_mutex);
     initialized_resources = false;
+    ml_enabled = false;
+    ml_blend_weight = 0.25;
+    ml_model_path.clear();
+    ml_tokenizer_path.clear();
+    ml_inference_script_path.clear();
+    ml_articles_path.clear();
     preprocessor    = std::make_unique<Preprocessor>();
     source_validator= std::make_unique<SourceValidator>();
     phrase_indexer  = std::make_unique<PhraseIndexer>();

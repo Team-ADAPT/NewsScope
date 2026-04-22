@@ -86,7 +86,7 @@ run-tests: $(TEST_TARGETS)
 	@echo "\n=== Running All Tests ===\n"
 	@for test in $(TEST_TARGETS); do \
 		echo "\nRunning $$test..."; \
-		$$test || exit 1; \
+		NEWSSCOPE_ENABLE_ML=0 $$test || exit 1; \
 	done
 	@echo "\n✓ All tests passed!"
 

@@ -220,6 +220,42 @@ label {
   font-weight: 700;
 }
 
+.input-tabs {
+  display: inline-flex;
+  gap: 8px;
+  padding: 5px;
+  border-radius: 14px;
+  background: rgba(24, 33, 31, 0.06);
+  margin-bottom: 16px;
+}
+
+.input-tab-btn {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  min-width: 92px;
+  padding: 10px 14px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.input-tab-btn:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
+.input-tab-btn.active {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  border-color: rgba(24, 33, 31, 0.12);
+}
+
+.input-tab-panel {
+  margin-bottom: 14px;
+}
+
 .optional,
 .hint,
 .keyboard-hint,
@@ -824,6 +860,15 @@ summary h3 {
   .input-grid,
   .result-hero {
     grid-template-columns: 1fr;
+  }
+
+  .input-tabs {
+    display: flex;
+    width: 100%;
+  }
+
+  .input-tab-btn {
+    flex: 1 1 0;
   }
 
   button {

@@ -13,6 +13,7 @@
 #include <memory>
 #include <chrono>
 #include <mutex>
+#include <string>
 
 namespace newsscope {
 
@@ -68,6 +69,13 @@ private:
     
     mutable std::mutex assess_mutex;
     bool initialized_resources = false;
+
+    bool ml_enabled = false;
+    double ml_blend_weight = 0.25;
+    std::string ml_model_path;
+    std::string ml_tokenizer_path;
+    std::string ml_inference_script_path;
+    std::string ml_articles_path;
 };
 
 }
