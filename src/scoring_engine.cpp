@@ -54,23 +54,23 @@ constexpr double LOW_CLAIM_VERIFIABILITY_THRESHOLD = 40.0;
 constexpr double MANIPULATION_THRESHOLD = 25.0;
 constexpr double SUSPICION_THRESHOLD = 60.0;
 
-// Risk penalty amounts
-constexpr double RISK_PENALTY_VERY_LOW_SOURCE = 8.0;
-constexpr double RISK_PENALTY_LOW_SOURCE = 4.0;
-constexpr double RISK_PENALTY_LOW_CLAIM_AND_SOURCE = 3.5;  // raised: weak source+claim combo is a real signal
-constexpr double RISK_PENALTY_SUSPICIOUS_PATTERNS = 6.0;
-constexpr double RISK_PENALTY_PER_UNCERTAINTY = 2.0;
-constexpr double RISK_PENALTY_MAX_UNCERTAINTY = 7.0;
-constexpr double RISK_PENALTY_CLAIM_MULTIPLIER = 0.40;     // raised: low claim verifiability should matter more
-constexpr double RISK_PENALTY_COMBINED_LOW = 4.0;
+// Risk penalty amounts (Phase 4: increased penalties for better detection)
+constexpr double RISK_PENALTY_VERY_LOW_SOURCE = 12.0;      // increased: 8.0 → 12.0
+constexpr double RISK_PENALTY_LOW_SOURCE = 6.0;            // increased: 4.0 → 6.0
+constexpr double RISK_PENALTY_LOW_CLAIM_AND_SOURCE = 5.5;  // increased: 3.5 → 5.5
+constexpr double RISK_PENALTY_SUSPICIOUS_PATTERNS = 9.0;   // increased: 6.0 → 9.0
+constexpr double RISK_PENALTY_PER_UNCERTAINTY = 3.0;       // increased: 2.0 → 3.0
+constexpr double RISK_PENALTY_MAX_UNCERTAINTY = 10.0;      // increased: 7.0 → 10.0
+constexpr double RISK_PENALTY_CLAIM_MULTIPLIER = 0.55;     // increased: 0.40 → 0.55 (weak claims matter more)
+constexpr double RISK_PENALTY_COMBINED_LOW = 6.0;          // increased: 4.0 → 6.0
 
-// Consistency boost amounts — capped to prevent perfect 100 on short articles
-constexpr double CONSISTENCY_BOOST_FACTUAL = 3.5;
-constexpr double CONSISTENCY_BOOST_HIGH_CLAIM = 1.5;
-constexpr double CONSISTENCY_BOOST_CLEAN_RECORD = 2.5;
-constexpr double CONSISTENCY_BOOST_TRUSTED_SOURCE = 2.0;
-constexpr double CONSISTENCY_BOOST_GROUNDED_UNKNOWN_SOURCE = 2.5;
-constexpr double MAX_CONSISTENCY_BOOST = 7.0;              // hard cap on total boost
+// Consistency boost amounts — Phase 3: increased boosts for quality articles
+constexpr double CONSISTENCY_BOOST_FACTUAL = 5.0;           // increased: 3.5 → 5.0
+constexpr double CONSISTENCY_BOOST_HIGH_CLAIM = 2.5;        // increased: 1.5 → 2.5
+constexpr double CONSISTENCY_BOOST_CLEAN_RECORD = 4.0;      // increased: 2.5 → 4.0
+constexpr double CONSISTENCY_BOOST_TRUSTED_SOURCE = 3.5;    // increased: 2.0 → 3.5
+constexpr double CONSISTENCY_BOOST_GROUNDED_UNKNOWN_SOURCE = 3.5;  // increased: 2.5 → 3.5
+constexpr double MAX_CONSISTENCY_BOOST = 12.0;              // increased: 7.0 → 12.0 (quality should be rewarded)
 
 // Score combination weights — weights must sum to 1.0
 constexpr double SOURCE_WEIGHT = 0.30;
@@ -719,7 +719,7 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
         (detection_module_average - RISK_ADJUSTMENT_CENTER) * RISK_ADJUSTMENT_MULTIPLIER;
     const double combined = credibility_core + risk_adjustment;
 
-    result.overall_score = clamp_score(combined - risk_penalty + consistency_boost, 0.0, 97.0);
+    result.overall_score = clamp_score(combined - risk_penalty + consistency_boost, 0.0, 100.0);  // Phase 5: removed 97 ceiling
     result.deterministic_score = result.overall_score;
     result.module_scores = {
         {"preprocessing",      local_scores.preprocessing_score},
@@ -783,7 +783,7 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
                     const double protected_score = (deterministic_score >= ML_HIGH_DETERMINISTIC_FLOOR)
                         ? std::max(blended_score, deterministic_score - ML_DOWNWARD_SHIFT_CAP)
                         : blended_score;
-                    result.overall_score = clamp_score(protected_score, 0.0, 97.0);
+                    result.overall_score = clamp_score(protected_score, 0.0, 100.0);  // Phase 5: removed 97 ceiling
 
                     std::stringstream fusion_msg;
                     fusion_msg << std::fixed << std::setprecision(2)

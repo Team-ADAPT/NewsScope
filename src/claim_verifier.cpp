@@ -228,11 +228,11 @@ ClaimAssessment ClaimVerifier::assess(const std::string& headline, const std::st
         score += 5.0;
     }
 
-    // Negative signals (reduced aggressiveness)
-    score -= std::min(28.0, static_cast<double>(result.uncertainty_hits) * 5.5);
-    score -= std::min(20.0, static_cast<double>(result.sensational_hits) * 5.0);
-    score -= std::min(24.0, static_cast<double>(result.promotional_hits) * 6.0);
-    score -= std::min(28.0, static_cast<double>(conspiratorial_hits) * 5.5);
+    // Negative signals (Phase 2: increased penalties for weak claims)
+    score -= std::min(35.0, static_cast<double>(result.uncertainty_hits) * 7.0);      // increased from 28.0 / 5.5
+    score -= std::min(25.0, static_cast<double>(result.sensational_hits) * 6.5);     // increased from 20.0 / 5.0
+    score -= std::min(30.0, static_cast<double>(result.promotional_hits) * 8.0);     // increased from 24.0 / 6.0
+    score -= std::min(32.0, static_cast<double>(conspiratorial_hits) * 7.0);         // increased from 28.0 / 5.5
 
     const bool unsupported_specific_claims =
         result.numeric_claims > 0 && weak_support;
@@ -287,10 +287,10 @@ ClaimAssessment ClaimVerifier::assess(const std::string& headline, const std::st
     if (anonymous_sourcing_hits > 0) {
         const bool anonymous_only = result.evidence_hits == 0 && grounding_hits < 2;
         if (anonymous_only) {
-            score -= std::min(12.0, static_cast<double>(anonymous_sourcing_hits) * 4.0);
+            score -= std::min(16.0, static_cast<double>(anonymous_sourcing_hits) * 5.5);  // Phase 2: 12.0/4.0 → 16.0/5.5
             result.flags.push_back("Anonymous sourcing without primary evidence");
         } else {
-            score -= std::min(4.0, static_cast<double>(anonymous_sourcing_hits) * 1.5);
+            score -= std::min(7.0, static_cast<double>(anonymous_sourcing_hits) * 2.5);   // Phase 2: 4.0/1.5 → 7.0/2.5
             result.flags.push_back("Anonymous sourcing reduces certainty");
         }
     }
