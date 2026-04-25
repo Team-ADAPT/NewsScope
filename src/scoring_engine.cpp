@@ -21,7 +21,7 @@ namespace {
 
 // Base scores
 constexpr double BASE_SCORE = 85.0;
-constexpr double BASELINE_PREPROCESSING_SCORE = 70.0;  // neutral articles start here
+constexpr double BASELINE_PREPROCESSING_SCORE = 50.0;  // neutral baseline; no article should start inflated
 
 // Short text handling
 constexpr size_t SHORT_TEXT_THRESHOLD_CRITICAL = 5;
@@ -75,8 +75,8 @@ constexpr double MAX_CONSISTENCY_BOOST = 7.0;              // hard cap on total 
 // Score combination weights — weights must sum to 1.0
 constexpr double SOURCE_WEIGHT = 0.30;
 constexpr double CLAIM_WEIGHT = 0.34;
-constexpr double PREPROCESSING_WEIGHT = 0.18;
-constexpr double DETECTION_WEIGHT = 0.18;
+constexpr double PREPROCESSING_WEIGHT = 0.12;  // reduced: preprocessing is less critical than detection
+constexpr double DETECTION_WEIGHT = 0.24;      // increased: detection signals are more important
 
 // Risk adjustment: detection avg above/below 75 nudges final score slightly
 constexpr double RISK_ADJUSTMENT_CENTER = 75.0;
