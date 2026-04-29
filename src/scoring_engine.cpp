@@ -536,72 +536,122 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
                << local_scores.source_score << "/100)";
     add_expl("Source Validation", local_scores.source_score, source_msg.str());
     
-    // Text-length confidence factor: longer clean text earns higher detection scores
-    const double text_confidence = std::min(1.0, static_cast<double>(tokens.size()) / static_cast<double>(TEXT_LENGTH_FULL_CONFIDENCE));
-    const double clean_text_bonus = text_confidence * CLEAN_TEXT_BONUS_MAX;
+    // =========================================================================
+    // RATIO-BASED MODULE SCORING
+    // Each module computes: score = (passed_checks / total_checks) * confidence
+    // confidence scales with text length — short text can never reach 100
+    // =========================================================================
+    const size_t token_count = tokens.size();
+    const double text_confidence = std::min(1.0, static_cast<double>(token_count) / static_cast<double>(TEXT_LENGTH_FULL_CONFIDENCE));
+    // Neutral midpoint: when we have no data, score is 50 (uncertain)
+    // With full confidence and zero problems: score approaches 95
+    // With full confidence and many problems: score approaches 0
+    constexpr double NEUTRAL = 50.0;
+    constexpr double MAX_CLEAN = 95.0;
 
+    // --- Phrase Indexing: successful_clean / total_phrases_checked ---
     auto found_phrases = phrase_indexer->find_in_text(combined_text);
-    double phrase_penalty = std::min(MAX_PHRASE_PENALTY, static_cast<double>(found_phrases.size()) * PHRASE_PENALTY_PER_HIT);
-    local_scores.phrase_score = clamp_score(BASE_SCORE + (found_phrases.empty() ? clean_text_bonus : 0.0) - phrase_penalty);
+    const size_t total_phrase_patterns = default_suspicious_phrases().size();
+    const size_t phrase_hits = found_phrases.size();
+    const double phrase_clean_ratio = (total_phrase_patterns > 0)
+        ? 1.0 - std::min(1.0, static_cast<double>(phrase_hits) / static_cast<double>(total_phrase_patterns))
+        : 0.5;
+    local_scores.phrase_score = clamp_score(
+        NEUTRAL + (MAX_CLEAN - NEUTRAL) * phrase_clean_ratio * text_confidence
+        - (1.0 - text_confidence) * (NEUTRAL - 30.0)  // low confidence pulls toward 30-50 range
+    );
     std::stringstream phrase_msg;
-    phrase_msg << "Found " << found_phrases.size() << " suspicious phrase(s)";
+    phrase_msg << "Found " << phrase_hits << "/" << total_phrase_patterns
+              << " suspicious phrase(s), clean ratio: " << static_cast<int>(phrase_clean_ratio * 100) << "%";
     add_expl("Phrase Indexing", local_scores.phrase_score, phrase_msg.str());
-    
-    const auto& malicious_patterns = suspicious_text_patterns();
 
+    // --- KMP Matching: patterns_clean / total_patterns_checked ---
+    const auto& malicious_patterns = suspicious_text_patterns();
     size_t kmp_matches = count_context_aware_hits(normalized_text, malicious_patterns);
-    double kmp_penalty = std::min(MAX_KMP_PENALTY, static_cast<double>(kmp_matches) * KMP_PENALTY_PER_HIT);
-    local_scores.kmp_score = clamp_score(BASE_SCORE + (kmp_matches == 0 ? clean_text_bonus : 0.0) - kmp_penalty);
+    const size_t total_kmp_patterns = malicious_patterns.size();
+    const double kmp_clean_ratio = (total_kmp_patterns > 0)
+        ? 1.0 - std::min(1.0, static_cast<double>(kmp_matches) / static_cast<double>(total_kmp_patterns))
+        : 0.5;
+    local_scores.kmp_score = clamp_score(
+        NEUTRAL + (MAX_CLEAN - NEUTRAL) * kmp_clean_ratio * text_confidence
+        - (1.0 - text_confidence) * (NEUTRAL - 30.0)
+    );
     std::stringstream kmp_msg;
-    kmp_msg << "KMP found " << kmp_matches << " suspicious pattern(s)";
+    kmp_msg << "KMP matched " << kmp_matches << "/" << total_kmp_patterns
+            << " patterns, clean ratio: " << static_cast<int>(kmp_clean_ratio * 100) << "%";
     add_expl("KMP Matching", local_scores.kmp_score, kmp_msg.str());
-    
+
+    // --- Rabin-Karp: unique_clean_patterns / total_patterns_checked ---
     auto rk_results = StringMatcher::rabin_karp_multi_search(
         normalized_text,
         malicious_patterns
     );
-
     std::unordered_set<size_t> unique_pattern_hits;
     unique_pattern_hits.reserve(rk_results.size());
     for (const auto& entry : rk_results) {
         unique_pattern_hits.insert(entry.second);
     }
-    double rk_penalty = std::min(MAX_RABIN_KARP_PENALTY, static_cast<double>(unique_pattern_hits.size()) * RABIN_KARP_PENALTY_PER_HIT);
-    local_scores.rabin_karp_score = clamp_score(BASE_SCORE + (unique_pattern_hits.empty() ? clean_text_bonus : 0.0) - rk_penalty);
-
+    const double rk_clean_ratio = (total_kmp_patterns > 0)
+        ? 1.0 - std::min(1.0, static_cast<double>(unique_pattern_hits.size()) / static_cast<double>(total_kmp_patterns))
+        : 0.5;
+    local_scores.rabin_karp_score = clamp_score(
+        NEUTRAL + (MAX_CLEAN - NEUTRAL) * rk_clean_ratio * text_confidence
+        - (1.0 - text_confidence) * (NEUTRAL - 30.0)
+    );
     std::stringstream rk_msg;
-    rk_msg << "Rabin-Karp found " << unique_pattern_hits.size() << " unique suspicious pattern(s)";
+    rk_msg << "Rabin-Karp matched " << unique_pattern_hits.size() << "/" << total_kmp_patterns
+           << " unique patterns, clean ratio: " << static_cast<int>(rk_clean_ratio * 100) << "%";
     add_expl("Rabin-Karp", local_scores.rabin_karp_score, rk_msg.str());
-    
+
+    // --- Frequency Analysis: (100 - suspicion) / 100 ---
     auto freq_result = frequency_analyzer->analyze(tokens, normalized_text);
-    double freq_suspicion = freq_result.suspicion_score;
-    double freq_penalty = std::min(MAX_FREQUENCY_PENALTY, freq_suspicion * FREQUENCY_PENALTY_MULTIPLIER);
-    const bool freq_clean = (freq_suspicion < SUSPICION_THRESHOLD);
-    local_scores.frequency_score = clamp_score(BASE_SCORE + (freq_clean ? clean_text_bonus : 0.0) - freq_penalty);
+    double freq_suspicion = freq_result.suspicion_score;  // 0-100
+    const double freq_clean_ratio = 1.0 - std::min(1.0, freq_suspicion / 100.0);
+    local_scores.frequency_score = clamp_score(
+        NEUTRAL + (MAX_CLEAN - NEUTRAL) * freq_clean_ratio * text_confidence
+        - (1.0 - text_confidence) * (NEUTRAL - 30.0)
+    );
     auto top_negative = freq_result.top_negative_terms;
     std::stringstream freq_msg;
-    freq_msg << "Found " << top_negative.size() << " negative term(s): ";
-    for (const auto& entry : top_negative) {
-        freq_msg << entry.term << " ";
+    freq_msg << "Suspicion: " << static_cast<int>(freq_suspicion) << "/100, "
+             << top_negative.size() << " negative term(s)";
+    if (!top_negative.empty()) {
+        freq_msg << ": ";
+        for (const auto& entry : top_negative) {
+            freq_msg << entry.term << " ";
+        }
     }
     add_expl("Frequency Analysis", local_scores.frequency_score, freq_msg.str());
-    
+
+    // --- Temporal Analysis: (100 - spike_score) / 100 ---
     temporal_analyzer->add_entry(article.source, tokens.size(), article.timestamp);
-    double temporal_spike = temporal_analyzer->get_spike_score();
-    local_scores.temporal_score = clamp_score(BASE_SCORE + (temporal_spike < 5.0 ? clean_text_bonus : 0.0) - temporal_spike);
+    double temporal_spike = temporal_analyzer->get_spike_score();  // 0-100
+    const double temporal_clean_ratio = 1.0 - std::min(1.0, temporal_spike / 100.0);
+    local_scores.temporal_score = clamp_score(
+        NEUTRAL + (MAX_CLEAN - NEUTRAL) * temporal_clean_ratio * text_confidence
+        - (1.0 - text_confidence) * (NEUTRAL - 30.0)
+    );
     std::stringstream temporal_msg;
-    temporal_msg << "Temporal spike score: " << temporal_spike << "/100";
+    temporal_msg << "Spike score: " << temporal_spike << "/100"
+                 << ", clean ratio: " << static_cast<int>(temporal_clean_ratio * 100) << "%";
     add_expl("Temporal Analysis", local_scores.temporal_score, temporal_msg.str());
-    
+
+    // --- Greedy Filtering: (100 - manipulation_score) / 100 ---
     auto greedy_result = greedy_filter->analyze_article(article.headline, article.body);
-    double greedy_manipulation = greedy_result.manipulation_score;
-    const bool greedy_clean = (greedy_manipulation < 15.0);
-    local_scores.greedy_score = clamp_score(BASE_SCORE + (greedy_clean ? clean_text_bonus : 0.0) - greedy_manipulation);
+    double greedy_manipulation = greedy_result.manipulation_score;  // 0-100
+    const double greedy_clean_ratio = 1.0 - std::min(1.0, greedy_manipulation / 100.0);
+    local_scores.greedy_score = clamp_score(
+        NEUTRAL + (MAX_CLEAN - NEUTRAL) * greedy_clean_ratio * text_confidence
+        - (1.0 - text_confidence) * (NEUTRAL - 30.0)
+    );
     auto signals = greedy_result.detected_signals;
     std::stringstream greedy_msg;
-    greedy_msg << "Detected " << signals.size() << " manipulation signal(s)";
+    greedy_msg << "Manipulation: " << static_cast<int>(greedy_manipulation) << "/100, "
+               << signals.size() << " signal(s)"
+               << ", clean ratio: " << static_cast<int>(greedy_clean_ratio * 100) << "%";
     add_expl("Greedy Filtering", local_scores.greedy_score, greedy_msg.str());
 
+    // --- Claim Verifiability (uses its own scoring, not ratio-based) ---
     const ClaimAssessment claim_assessment = claim_verifier->assess(article.headline, article.body);
     local_scores.claim_verifiability_score = claim_assessment.verifiability_score;
     std::stringstream claim_msg;

@@ -69,8 +69,8 @@ function clearResult() {
 }
 
 function getScoreClass(score) {
-  if (score >= 65) return "high";
-  if (score >= 40) return "medium";
+  if (score >= 75) return "high";
+  if (score >= 50) return "medium";
   return "low";
 }
 
@@ -162,11 +162,19 @@ function renderExplanations(lines) {
 }
 
 function renderModules(modules) {
+  console.log("[NewsScope Debug] Module scores received from API:", JSON.stringify(modules));
   Object.entries(modules)
     .sort((a, b) => Number(b[1]) - Number(a[1]))
     .forEach(([name, value], index) => {
       const numValue = normalizeScore(value);
       const moduleClass = getScoreClass(numValue);
+
+      console.log(`[NewsScope Debug] ${name}: raw=${value}, normalized=${numValue}, class=${moduleClass}`);
+
+      // SAFETY: if score is exactly 100 and this is a detection module, flag it
+      if (numValue === 100) {
+        console.warn(`[NewsScope Warning] Module "${name}" scored exactly 100 — verify backend computation`);
+      }
 
       const item = document.createElement("div");
       item.className = "module-item";
@@ -175,7 +183,7 @@ function renderModules(modules) {
       item.innerHTML = `
         <div class="module-topline">
           <span class="module-name">${formatModuleName(name)}</span>
-          <span class="module-score ${moduleClass}">${numValue.toFixed(0)}</span>
+          <span class="module-score ${moduleClass}">${numValue.toFixed(0)}%</span>
         </div>
         <div class="module-bar">
           <div class="module-bar-fill ${moduleClass}" style="width: 0%"></div>
@@ -192,6 +200,7 @@ function renderModules(modules) {
 }
 
 function renderResult(data) {
+  console.log("[NewsScope Debug] Full API response:", JSON.stringify(data, null, 2));
   const score = normalizeScore(data.score);
   const deterministicScore = normalizeScore(data.deterministic_score);
   const mlScore =
