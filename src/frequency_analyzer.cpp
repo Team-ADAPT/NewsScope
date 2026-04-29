@@ -68,9 +68,10 @@ FrequencyAnalyzer::FrequencyAnalyzer() {
     add_negative_term("outrageous", 0.6);
 }
 
-void FrequencyAnalyzer::analyze(const std::vector<std::string>& tokens,
-                                const std::string& normalized_text) {
-    frequency_map.clear();
+FrequencyAnalysisResult FrequencyAnalyzer::analyze(const std::vector<std::string>& tokens,
+                                                 const std::string& normalized_text) const {
+    FrequencyAnalysisResult result;
+    std::unordered_map<std::string, int>& frequency_map = result.frequency_map;
     
     for (const auto& token : tokens) {
         frequency_map[token]++;
@@ -89,28 +90,9 @@ void FrequencyAnalyzer::analyze(const std::vector<std::string>& tokens,
         }
     }
     
-    update_suspicion_cache();
-}
+    std::unordered_map<std::string, double> suspicion_cache;
+    double total_suspicion = 0.0;
 
-void FrequencyAnalyzer::add_negative_term(const std::string& term, double weight) {
-    const std::string normalized = normalize_term(term);
-    const double clamped_weight = std::max(0.0, std::min(1.0, weight));
-    if (normalized.empty() || !should_track_term(normalized, clamped_weight)) {
-        return;
-    }
-    negative_term_weights[normalized] = clamped_weight;
-}
-
-int FrequencyAnalyzer::get_frequency(const std::string& term) const {
-    const std::string normalized = normalize_term(term);
-    auto it = frequency_map.find(normalized);
-    return (it != frequency_map.end()) ? it->second : 0;
-}
-
-void FrequencyAnalyzer::update_suspicion_cache() {
-    suspicion_cache.clear();
-
-    // More efficient: iterate observed tokens and probe negative term dictionary.
     for (const auto& freq_entry : frequency_map) {
         const auto weight_it = negative_term_weights.find(freq_entry.first);
         if (weight_it == negative_term_weights.end()) {
@@ -119,25 +101,12 @@ void FrequencyAnalyzer::update_suspicion_cache() {
         const double weight = weight_it->second;
         const int frequency = freq_entry.second;
         const double suspicion = weight * (1.0 - std::exp(-0.3 * frequency));
-        suspicion_cache[freq_entry.first] = suspicion * 100.0;
-    }
-}
-
-double FrequencyAnalyzer::get_suspicion_score() {
-    if (suspicion_cache.empty()) {
-        return 0.0;  // No negative terms found — no suspicion
+        const double suspicion_scaled = suspicion * 100.0;
+        suspicion_cache[freq_entry.first] = suspicion_scaled;
+        total_suspicion += suspicion_scaled;
     }
     
-    double total_suspicion = 0.0;
-    for (const auto& entry : suspicion_cache) {
-        total_suspicion += entry.second;
-    }
-    
-    return std::min(100.0, total_suspicion);
-}
-
-std::vector<FrequencyEntry> FrequencyAnalyzer::get_top_negative_terms(size_t count) {
-    std::vector<FrequencyEntry> entries;
+    result.suspicion_score = std::min(100.0, total_suspicion);
 
     for (const auto& freq_entry : frequency_map) {
         const auto weight_it = negative_term_weights.find(freq_entry.first);
@@ -151,19 +120,28 @@ std::vector<FrequencyEntry> FrequencyAnalyzer::get_top_negative_terms(size_t cou
             suspicion_level = cache_it->second;
         }
 
-        entries.push_back({freq_entry.first, freq_entry.second, suspicion_level});
+        result.top_negative_terms.push_back({freq_entry.first, freq_entry.second, suspicion_level});
     }
     
-    std::sort(entries.begin(), entries.end(),
+    std::sort(result.top_negative_terms.begin(), result.top_negative_terms.end(),
               [](const FrequencyEntry& a, const FrequencyEntry& b) {
                   return a.suspicion_level > b.suspicion_level;
               });
     
-    if (entries.size() > count) {
-        entries.resize(count);
+    if (result.top_negative_terms.size() > 3) {
+        result.top_negative_terms.resize(3);
     }
-    
-    return entries;
+
+    return result;
+}
+
+void FrequencyAnalyzer::add_negative_term(const std::string& term, double weight) {
+    const std::string normalized = normalize_term(term);
+    const double clamped_weight = std::max(0.0, std::min(1.0, weight));
+    if (normalized.empty() || !should_track_term(normalized, clamped_weight)) {
+        return;
+    }
+    negative_term_weights[normalized] = clamped_weight;
 }
 
 bool FrequencyAnalyzer::load_negative_terms_from_file(const std::string& filename) {
@@ -187,15 +165,6 @@ bool FrequencyAnalyzer::load_negative_terms_from_file(const std::string& filenam
     
     file.close();
     return true;
-}
-
-void FrequencyAnalyzer::clear() {
-    frequency_map.clear();
-    suspicion_cache.clear();
-}
-
-double FrequencyAnalyzer::get_final_score() {
-    return get_suspicion_score();
 }
 
 bool FrequencyAnalyzer::should_track_term(const std::string& term, double weight) const {

@@ -134,7 +134,7 @@ void test_full_article_analysis() {
     std::string headline = "SHOCKING NEWS!!!";
     std::string body = "This is OUTRAGEOUS and absolutely incredible!";
     
-    double score = filter.analyze_article(headline, body);
+    double score = filter.analyze_article(headline, body).manipulation_score;
     assert(score >= 0.0 && score <= 100.0);
     
     std::cout << "  ✓ Full article analysis score: " << score << "\n";

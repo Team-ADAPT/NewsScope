@@ -228,7 +228,8 @@ void test_custom_weights() {
         0.0,    // rabin_karp
         0.0,    // frequency
         0.0,    // temporal
-        0.0     // greedy
+        0.0,    // greedy
+        0.0     // claim
     );
     
     Article article("test", "News", "Body", "BBC");

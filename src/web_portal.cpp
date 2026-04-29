@@ -226,7 +226,7 @@ bool is_private_or_local_sockaddr(const sockaddr* addr) {
     return true;
 }
 
-bool host_resolves_to_public_address(const std::string& host) {
+bool host_resolves_to_public_address(const std::string& host, std::string& out_ip) {
     addrinfo hints{};
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_family = AF_UNSPEC;
@@ -240,6 +240,13 @@ bool host_resolves_to_public_address(const std::string& host) {
     for (addrinfo* current = results; current != nullptr; current = current->ai_next) {
         if (!is_private_or_local_sockaddr(current->ai_addr)) {
             found_public = true;
+            char ipstr[INET6_ADDRSTRLEN];
+            if (current->ai_family == AF_INET) {
+                inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(current->ai_addr)->sin_addr, ipstr, sizeof(ipstr));
+            } else {
+                inet_ntop(AF_INET6, &reinterpret_cast<sockaddr_in6*>(current->ai_addr)->sin6_addr, ipstr, sizeof(ipstr));
+            }
+            out_ip = ipstr;
             break;
         }
     }
@@ -685,7 +692,8 @@ bool fetch_url_payload(const std::string& url, std::string& payload, std::string
         error = "Could not extract URL host";
         return false;
     }
-    if (!host_resolves_to_public_address(host)) {
+    std::string resolved_ip;
+    if (!host_resolves_to_public_address(host, resolved_ip)) {
         error = "URL host does not resolve to a public address";
         return false;
     }
@@ -710,6 +718,9 @@ bool fetch_url_payload(const std::string& url, std::string& payload, std::string
         close(pipe_fds[0]);
         close(pipe_fds[1]);
 
+        std::string resolve_arg_80 = host + ":80:" + resolved_ip;
+        std::string resolve_arg_443 = host + ":443:" + resolved_ip;
+
         std::vector<std::string> args_storage = {
             "curl",
             "--location",
@@ -723,6 +734,8 @@ bool fetch_url_payload(const std::string& url, std::string& payload, std::string
             "--connect-timeout", "7",
             "--compressed",
             "--user-agent", "NewsScope/1.0",
+            "--resolve", resolve_arg_80,
+            "--resolve", resolve_arg_443,
             "--url", url
         };
 

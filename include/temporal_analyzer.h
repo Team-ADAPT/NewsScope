@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <vector>
+#include <mutex>
 
 namespace newsscope {
 
@@ -26,6 +27,7 @@ public:
 private:
     std::deque<TimeWindowEntry> time_window;
     std::chrono::seconds window_duration;
+    mutable std::mutex window_mutex;
     
     void cleanup_expired_entries();
     double calculate_frequency_stats(const std::string& term, double& mean, double& stddev);

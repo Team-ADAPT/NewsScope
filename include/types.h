@@ -52,6 +52,17 @@ struct GreedySignal {
     }
 };
 
+struct FrequencyAnalysisResult {
+    double suspicion_score = 0.0;
+    std::vector<FrequencyEntry> top_negative_terms;
+    std::unordered_map<std::string, int> frequency_map;
+};
+
+struct GreedyAnalysisResult {
+    double manipulation_score = 0.0;
+    std::vector<GreedySignal> detected_signals;
+};
+
 }
 
 #endif

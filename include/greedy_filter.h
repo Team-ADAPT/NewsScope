@@ -24,26 +24,22 @@ public:
     
     GreedyFilter();
     
-    std::vector<GreedySignal> detect_patterns(const std::string& headline);
-    double calculate_manipulation_score(const std::vector<GreedySignal>& signals);
+    std::vector<GreedySignal> detect_patterns(const std::string& headline) const;
+    double calculate_manipulation_score(const std::vector<GreedySignal>& signals) const;
     void add_pattern_rule(const std::string& pattern_name,
                          std::function<bool(const std::string&)> detector,
                          double severity);
-    double analyze_article(const std::string& headline, const std::string& body);
-    std::vector<GreedySignal> get_detected_signals() const;
-    void clear();
+    GreedyAnalysisResult analyze_article(const std::string& headline, const std::string& body) const;
     
-private:
-    std::vector<GreedySignal> detected_signals;
     std::vector<std::tuple<std::string, std::function<bool(const std::string&)>, double>> custom_rules;
     
-    bool detect_all_caps(const std::string& text);
-    bool detect_excessive_exclamation(const std::string& text);
-    bool detect_excessive_question(const std::string& text);
-    bool detect_sensational_words(const std::string& text);
-    bool detect_clickbait_structure(const std::string& text);
-    bool detect_urgency_tactics(const std::string& text);
-    bool detect_emotional_manipulation(const std::string& text);
+    bool detect_all_caps(const std::string& text) const;
+    bool detect_excessive_exclamation(const std::string& text) const;
+    bool detect_excessive_question(const std::string& text) const;
+    bool detect_sensational_words(const std::string& text) const;
+    bool detect_clickbait_structure(const std::string& text) const;
+    bool detect_urgency_tactics(const std::string& text) const;
+    bool detect_emotional_manipulation(const std::string& text) const;
     
     int count_char(const std::string& text, char c) const;
     bool contains_word(const std::string& text, const std::string& word) const;

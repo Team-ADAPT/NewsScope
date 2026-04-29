@@ -8,6 +8,7 @@ TemporalAnalyzer::TemporalAnalyzer()
     : window_duration(std::chrono::hours(24)) {}
 
 void TemporalAnalyzer::set_window_duration(std::chrono::seconds duration) {
+    std::lock_guard<std::mutex> lock(window_mutex);
     window_duration = duration;
     cleanup_expired_entries();
 }
@@ -30,11 +31,13 @@ void TemporalAnalyzer::cleanup_expired_entries() {
 
 void TemporalAnalyzer::add_entry(const std::string& term, int frequency,
                                  std::chrono::system_clock::time_point timestamp) {
+    std::lock_guard<std::mutex> lock(window_mutex);
     cleanup_expired_entries();
     time_window.push_back({timestamp, term, frequency});
 }
 
 double TemporalAnalyzer::calculate_spike_severity(const std::string& term) {
+    std::lock_guard<std::mutex> lock(window_mutex);
     if (time_window.empty()) {
         return 0.0;
     }
@@ -92,6 +95,7 @@ double TemporalAnalyzer::calculate_frequency_stats(const std::string& term,
 }
 
 std::vector<std::pair<std::string, double>> TemporalAnalyzer::get_detected_spikes() {
+    std::lock_guard<std::mutex> lock(window_mutex);
     cleanup_expired_entries();
 
     // Single pass: collect per-term frequencies
@@ -123,7 +127,7 @@ std::vector<std::pair<std::string, double>> TemporalAnalyzer::get_detected_spike
 }
 
 double TemporalAnalyzer::get_spike_score() {
-    auto spikes = get_detected_spikes();
+    auto spikes = get_detected_spikes(); // gets its own lock
     
     if (spikes.empty()) {
         return 0.0;  // No spike activity means no temporal suspicion
@@ -140,6 +144,7 @@ double TemporalAnalyzer::get_spike_score() {
 }
 
 double TemporalAnalyzer::get_average_frequency(const std::string& term) {
+    std::lock_guard<std::mutex> lock(window_mutex);
     if (time_window.empty()) {
         return 0.0;
     }
@@ -160,6 +165,7 @@ double TemporalAnalyzer::get_average_frequency(const std::string& term) {
 }
 
 void TemporalAnalyzer::clear() {
+    std::lock_guard<std::mutex> lock(window_mutex);
     time_window.clear();
 }
 

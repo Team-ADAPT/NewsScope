@@ -20,6 +20,7 @@ namespace newsscope {
 class ScoringEngine {
 public:
     ScoringEngine();
+    ~ScoringEngine();
     
     void initialize(const std::string& sources_csv = "",
                    const std::string& suspicious_phrases_file = "",
@@ -31,7 +32,8 @@ public:
     void set_module_weights(double preprocessing_weight, double source_weight,
                            double phrase_weight, double kmp_weight,
                            double rabin_karp_weight, double frequency_weight,
-                           double temporal_weight, double greedy_weight);
+                           double temporal_weight, double greedy_weight,
+                           double claim_weight);
     
     std::unordered_map<std::string, double> get_module_scores() const;
     std::vector<std::string> get_explanations() const;
@@ -57,20 +59,19 @@ private:
     std::unique_ptr<GreedyFilter> greedy_filter;
     std::unique_ptr<ClaimVerifier> claim_verifier;
     
-    static constexpr double DEFAULT_MODULE_WEIGHT = 12.5;  // 100 / 8 modules
-    
     struct Weights {
-        double preprocessing = DEFAULT_MODULE_WEIGHT;
-        double source = DEFAULT_MODULE_WEIGHT;
-        double phrase = DEFAULT_MODULE_WEIGHT;
-        double kmp = DEFAULT_MODULE_WEIGHT;
-        double rabin_karp = DEFAULT_MODULE_WEIGHT;
-        double frequency = DEFAULT_MODULE_WEIGHT;
-        double temporal = DEFAULT_MODULE_WEIGHT;
-        double greedy = DEFAULT_MODULE_WEIGHT;
+        double preprocessing = 12.0;
+        double source = 30.0;
+        double phrase = 4.0;
+        double kmp = 4.0;
+        double rabin_karp = 4.0;
+        double frequency = 4.0;
+        double temporal = 4.0;
+        double greedy = 4.0;
+        double claim_verifiability = 34.0;
     } weights;
     
-    mutable std::mutex assess_mutex;
+    mutable std::mutex last_result_mutex;
     bool initialized_resources = false;
 
     bool ml_enabled = false;
@@ -79,6 +80,12 @@ private:
     std::string ml_tokenizer_path;
     std::string ml_inference_script_path;
     std::string ml_articles_path;
+    
+    // ML IPC State
+    pid_t ml_child_pid = -1;
+    int ml_write_fd = -1;
+    int ml_read_fd = -1;
+    mutable std::mutex ml_ipc_mutex;
 };
 
 }

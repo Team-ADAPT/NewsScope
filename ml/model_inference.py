@@ -189,7 +189,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="NewsScope ML inference (TF-IDF + Logistic Regression)")
     parser.add_argument("--model", required=True, help="Path to serialized model (.joblib)")
     parser.add_argument("--tokenizer", required=True, help="Path to metadata json (compatibility field)")
-    parser.add_argument("--text-file", required=True, help="Path to input text file")
+    parser.add_argument("--text-file", required=False, help="Path to input text file (unused in server mode)")
+    parser.add_argument("--server", action="store_true", help="Run in continuous IPC server mode over stdin/stdout")
     parser.add_argument("--articles", default="data/articles.json", help="Dataset used when model training is needed")
     parser.add_argument("--vocab-size", type=int, default=DEFAULT_MAX_FEATURES, help="Max TF-IDF features")
     parser.add_argument("--max-len", type=int, default=0, help="Unused legacy argument (kept for compatibility)")
@@ -199,13 +200,6 @@ def main() -> int:
         model_path = Path(args.model)
         tokenizer_path = Path(args.tokenizer)
         articles_path = Path(args.articles)
-        text_path = Path(args.text_file)
-
-        if not text_path.exists():
-            print("ERR|Input text file not found")
-            return 1
-
-        text = text_path.read_text(encoding="utf-8")
         pipeline, details = load_or_train_pipeline(
             model_path=model_path,
             tokenizer_path=tokenizer_path,
@@ -213,10 +207,36 @@ def main() -> int:
             max_features=int(args.vocab_size),
         )
 
-        probability = predict_credible_probability(pipeline=pipeline, text=text)
-        probability = max(0.0, min(1.0, probability))
-        print(f"OK|{probability:.8f}|{sanitize_message('TF-IDF + Logistic Regression, ' + details)}")
-        return 0
+        if args.server:
+            import sys
+            print("READY", flush=True)
+            for line in sys.stdin:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    text = data.get("text", "")
+                    probability = predict_credible_probability(pipeline=pipeline, text=text)
+                    probability = max(0.0, min(1.0, probability))
+                    print(f"OK|{probability:.8f}|{sanitize_message('TF-IDF + Logistic Regression, ' + details)}", flush=True)
+                except Exception as exc:
+                    print(f"ERR|{sanitize_message(str(exc))}", flush=True)
+            return 0
+        else:
+            if not args.text_file:
+                print("ERR|--text-file is required when not in --server mode")
+                return 1
+            text_path = Path(args.text_file)
+            if not text_path.exists():
+                print("ERR|Input text file not found")
+                return 1
+
+            text = text_path.read_text(encoding="utf-8")
+            probability = predict_credible_probability(pipeline=pipeline, text=text)
+            probability = max(0.0, min(1.0, probability))
+            print(f"OK|{probability:.8f}|{sanitize_message('TF-IDF + Logistic Regression, ' + details)}")
+            return 0
     except Exception as exc:
         print(f"ERR|{sanitize_message(str(exc))}")
         return 1

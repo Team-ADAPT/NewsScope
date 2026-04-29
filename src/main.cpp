@@ -328,9 +328,41 @@ int main() {
     
     // Batch assessment demonstration
     std::cout << "\n\n=== BATCH PROCESSING DEMONSTRATION ===\n";
-    std::vector<Article> batch_articles = articles;
-    if (batch_articles.size() > 20) {
-        batch_articles.resize(20);
+    std::vector<Article> batch_articles;
+    if (articles.size() > 20) {
+        int trusted_count = 0;
+        int fake_count = 0;
+        int other_count = 0;
+        for (const auto& a : articles) {
+            if (a.id.find("trusted-") != std::string::npos) {
+                if (trusted_count < 7) {
+                    batch_articles.push_back(a);
+                    trusted_count++;
+                }
+            } else if (a.id.find("fake-") != std::string::npos) {
+                if (fake_count < 7) {
+                    batch_articles.push_back(a);
+                    fake_count++;
+                }
+            } else {
+                if (other_count < 6) {
+                    batch_articles.push_back(a);
+                    other_count++;
+                }
+            }
+            if (batch_articles.size() >= 20) break;
+        }
+        // Fill up if we didn't find exactly 20
+        for (const auto& a : articles) {
+            if (batch_articles.size() >= 20) break;
+            bool found = false;
+            for (const auto& ba : batch_articles) {
+                if (ba.id == a.id) { found = true; break; }
+            }
+            if (!found) batch_articles.push_back(a);
+        }
+    } else {
+        batch_articles = articles;
     }
     auto batch_results = engine.assess_batch(batch_articles);
     

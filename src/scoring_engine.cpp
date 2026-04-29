@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <csignal>
 
 namespace {
 
@@ -20,7 +21,7 @@ namespace {
 // =============================================================================
 
 // Base scores
-constexpr double BASE_SCORE = 85.0;
+constexpr double BASE_SCORE = 100.0;
 constexpr double BASELINE_PREPROCESSING_SCORE = 50.0;  // neutral baseline; no article should start inflated
 
 // Short text handling
@@ -207,32 +208,6 @@ std::string trim_copy(const std::string& value) {
     return value.substr(start, end - start + 1);
 }
 
-bool write_temp_text_file(const std::string& text, std::string& out_path) {
-    char templ[] = "/tmp/newsscope_ml_XXXXXX";
-    const int fd = mkstemp(templ);
-    if (fd < 0) {
-        return false;
-    }
-    out_path = templ;
-    const ssize_t written = write(fd, text.data(), text.size());
-    close(fd);
-    return written == static_cast<ssize_t>(text.size());
-}
-
-std::string read_fd_to_string(int fd) {
-    std::array<char, 512> buffer{};
-    std::string output;
-
-    while (true) {
-        const ssize_t bytes_read = read(fd, buffer.data(), buffer.size());
-        if (bytes_read <= 0) {
-            break;
-        }
-        output.append(buffer.data(), static_cast<size_t>(bytes_read));
-    }
-
-    return output;
-}
 
 struct MlInferenceResult {
     bool ok = false;
@@ -274,93 +249,44 @@ MlInferenceResult parse_ml_output(const std::string& output) {
     return result;
 }
 
-MlInferenceResult run_ml_inference(const std::string& script_path,
-                                   const std::string& model_path,
-                                   const std::string& tokenizer_path,
-                                   const std::string& articles_path,
-                                   const std::string& text) {
+MlInferenceResult run_ml_inference_ipc(const std::string& text, int write_fd, int read_fd, std::mutex& ipc_mutex) {
+    std::lock_guard<std::mutex> lock(ipc_mutex);
     MlInferenceResult result;
-
-    if (script_path.find('\0') != std::string::npos ||
-        model_path.find('\0') != std::string::npos ||
-        tokenizer_path.find('\0') != std::string::npos ||
-        articles_path.find('\0') != std::string::npos) {
-        result.error = "Invalid ML path configuration";
+    
+    if (write_fd < 0 || read_fd < 0) {
+        result.error = "ML IPC pipes not initialized";
         return result;
     }
 
-    std::string temp_text_path;
-    if (!write_temp_text_file(text, temp_text_path)) {
-        result.error = "Could not create ML input file";
+    std::string escaped_text;
+    for (char c : text) {
+        if (c == '"') escaped_text += "\\\"";
+        else if (c == '\\') escaped_text += "\\\\";
+        else if (c == '\n') escaped_text += "\\n";
+        else if (c == '\r') escaped_text += "\\r";
+        else if (c == '\t') escaped_text += "\\t";
+        else escaped_text += c;
+    }
+    std::string payload = "{\"text\": \"" + escaped_text + "\"}\n";
+    
+    if (write(write_fd, payload.data(), payload.size()) != static_cast<ssize_t>(payload.size())) {
+        result.error = "Failed to write to ML process";
         return result;
     }
-
-    int pipe_fds[2];
-    if (pipe(pipe_fds) != 0) {
-        std::remove(temp_text_path.c_str());
-        result.error = "Could not create ML output pipe";
+    
+    std::string response;
+    char ch;
+    while (read(read_fd, &ch, 1) == 1) {
+        if (ch == '\n') break;
+        response += ch;
+    }
+    
+    if (response.empty()) {
+        result.error = "Empty response from ML process";
         return result;
     }
-
-    const pid_t pid = fork();
-    if (pid < 0) {
-        close(pipe_fds[0]);
-        close(pipe_fds[1]);
-        std::remove(temp_text_path.c_str());
-        result.error = "Could not fork ML process";
-        return result;
-    }
-
-    if (pid == 0) {
-        dup2(pipe_fds[1], STDOUT_FILENO);
-        dup2(pipe_fds[1], STDERR_FILENO);
-        close(pipe_fds[0]);
-        close(pipe_fds[1]);
-
-        std::vector<std::string> arg_storage = {
-            "python3",
-            script_path,
-            "--model",
-            model_path,
-            "--tokenizer",
-            tokenizer_path,
-            "--text-file",
-            temp_text_path
-        };
-        if (!articles_path.empty()) {
-            arg_storage.push_back("--articles");
-            arg_storage.push_back(articles_path);
-        }
-
-        std::vector<char*> argv;
-        argv.reserve(arg_storage.size() + 1);
-        for (std::string& arg : arg_storage) {
-            argv.push_back(arg.data());
-        }
-        argv.push_back(nullptr);
-
-        execvp("python3", argv.data());
-        _exit(127);
-    }
-
-    close(pipe_fds[1]);
-    const std::string output = read_fd_to_string(pipe_fds[0]);
-    close(pipe_fds[0]);
-
-    int status = 0;
-    int exit_code = -1;
-    if (waitpid(pid, &status, 0) >= 0 && WIFEXITED(status)) {
-        exit_code = WEXITSTATUS(status);
-    }
-    std::remove(temp_text_path.c_str());
-
-    result = parse_ml_output(output);
-    if (!result.ok && exit_code != 0) {
-        if (result.error.empty() || result.error == "No ML output") {
-            result.error = "ML process failed (exit code " + std::to_string(exit_code) + ")";
-        }
-    }
-    return result;
+    
+    return parse_ml_output(response);
 }
 
 const std::vector<std::string>& default_suspicious_phrases() {
@@ -425,10 +351,19 @@ ScoringEngine::ScoringEngine()
       greedy_filter(std::make_unique<GreedyFilter>()),
       claim_verifier(std::make_unique<ClaimVerifier>()) {}
 
+ScoringEngine::~ScoringEngine() {
+    if (ml_child_pid > 0) {
+        close(ml_write_fd);
+        close(ml_read_fd);
+        kill(ml_child_pid, SIGTERM);
+        waitpid(ml_child_pid, nullptr, 0);
+    }
+}
+
 void ScoringEngine::initialize(const std::string& sources_csv,
                               const std::string& suspicious_phrases_file,
                               const std::string& negative_terms_file) {
-    std::lock_guard<std::mutex> lock(assess_mutex);
+    std::lock_guard<std::mutex> lock(last_result_mutex);
     if (initialized_resources &&
         sources_csv.empty() &&
         suspicious_phrases_file.empty() &&
@@ -496,14 +431,63 @@ void ScoringEngine::initialize(const std::string& sources_csv,
         const bool has_serialized_model = model_stream.is_open();
         const bool can_train_from_articles = articles_stream.is_open();
         ml_enabled = script_stream.is_open() && (has_serialized_model || can_train_from_articles);
+        
+        if (ml_enabled && ml_child_pid < 0) {
+            int pipe_to_child[2];
+            int pipe_from_child[2];
+            if (pipe(pipe_to_child) == 0 && pipe(pipe_from_child) == 0) {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    dup2(pipe_to_child[0], STDIN_FILENO);
+                    dup2(pipe_from_child[1], STDOUT_FILENO);
+                    close(pipe_to_child[0]); close(pipe_to_child[1]);
+                    close(pipe_from_child[0]); close(pipe_from_child[1]);
+                    
+                    std::vector<std::string> arg_storage = {
+                        "python3", ml_inference_script_path,
+                        "--model", ml_model_path,
+                        "--tokenizer", ml_tokenizer_path,
+                        "--server"
+                    };
+                    if (!ml_articles_path.empty()) {
+                        arg_storage.push_back("--articles");
+                        arg_storage.push_back(ml_articles_path);
+                    }
+                    std::vector<char*> argv;
+                    for (auto& a : arg_storage) argv.push_back(a.data());
+                    argv.push_back(nullptr);
+                    
+                    execvp("python3", argv.data());
+                    _exit(127);
+                } else if (pid > 0) {
+                    close(pipe_to_child[0]);
+                    close(pipe_from_child[1]);
+                    ml_write_fd = pipe_to_child[1];
+                    ml_read_fd = pipe_from_child[0];
+                    ml_child_pid = pid;
+                    
+                    std::string ready_str;
+                    char ch;
+                    while (read(ml_read_fd, &ch, 1) == 1) {
+                        if (ch == '\n') break;
+                        ready_str += ch;
+                    }
+                    if (trim_copy(ready_str) != "READY") {
+                        ml_enabled = false;
+                    }
+                } else {
+                    ml_enabled = false;
+                }
+            } else {
+                ml_enabled = false;
+            }
+        }
     }
 
     initialized_resources = true;
 }
 
 CredibilityResult ScoringEngine::assess_article(const Article& article) {
-    std::lock_guard<std::mutex> lock(assess_mutex);
-
     CredibilityResult result;
     ModuleScores local_scores;
     std::vector<std::string> local_explanations;
@@ -580,11 +564,11 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     rk_msg << "Rabin-Karp found " << unique_pattern_hits.size() << " unique suspicious pattern(s)";
     add_expl("Rabin-Karp", local_scores.rabin_karp_score, rk_msg.str());
     
-    frequency_analyzer->analyze(tokens, normalized_text);
-    double freq_suspicion = frequency_analyzer->get_suspicion_score();
+    auto freq_result = frequency_analyzer->analyze(tokens, normalized_text);
+    double freq_suspicion = freq_result.suspicion_score;
     double freq_penalty = std::min(MAX_FREQUENCY_PENALTY, freq_suspicion * FREQUENCY_PENALTY_MULTIPLIER);
     local_scores.frequency_score = clamp_score(BASE_SCORE - freq_penalty);
-    auto top_negative = frequency_analyzer->get_top_negative_terms(3);
+    auto top_negative = freq_result.top_negative_terms;
     std::stringstream freq_msg;
     freq_msg << "Found " << top_negative.size() << " negative term(s): ";
     for (const auto& entry : top_negative) {
@@ -599,9 +583,10 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     temporal_msg << "Temporal spike score: " << temporal_spike << "/100";
     add_expl("Temporal Analysis", local_scores.temporal_score, temporal_msg.str());
     
-    double greedy_manipulation = greedy_filter->analyze_article(article.headline, article.body);
+    auto greedy_result = greedy_filter->analyze_article(article.headline, article.body);
+    double greedy_manipulation = greedy_result.manipulation_score;
     local_scores.greedy_score = clamp_score(BASE_SCORE - greedy_manipulation);
-    auto signals = greedy_filter->get_detected_signals();
+    auto signals = greedy_result.detected_signals;
     std::stringstream greedy_msg;
     greedy_msg << "Detected " << signals.size() << " manipulation signal(s)";
     add_expl("Greedy Filtering", local_scores.greedy_score, greedy_msg.str());
@@ -699,21 +684,29 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     // Hard cap: no article should reach 100 purely from boosts
     consistency_boost = std::min(consistency_boost, MAX_CONSISTENCY_BOOST);
 
-    // Calculate detection module average
-    const double detection_module_average =
-        (local_scores.phrase_score +
-         local_scores.kmp_score +
-         local_scores.rabin_karp_score +
-         local_scores.frequency_score +
-         local_scores.temporal_score +
-         local_scores.greedy_score) / 6.0;
+    // Calculate detection module average using dynamic weights
+    const double detection_weight_sum =
+        weights.phrase + weights.kmp + weights.rabin_karp +
+        weights.frequency + weights.temporal + weights.greedy;
+        
+    const double detection_module_average = (detection_weight_sum > 0.0) ?
+        ((local_scores.phrase_score * weights.phrase) +
+         (local_scores.kmp_score * weights.kmp) +
+         (local_scores.rabin_karp_score * weights.rabin_karp) +
+         (local_scores.frequency_score * weights.frequency) +
+         (local_scores.temporal_score * weights.temporal) +
+         (local_scores.greedy_score * weights.greedy)) / detection_weight_sum : 50.0;
 
-    // REFINED scoring formula with proper weights
-    const double credibility_core =
-        (local_scores.source_score * SOURCE_WEIGHT) +
-        (local_scores.claim_verifiability_score * CLAIM_WEIGHT) +
-        (local_scores.preprocessing_score * PREPROCESSING_WEIGHT) +
-        (detection_module_average * DETECTION_WEIGHT);
+    // Calculate sum of all weights
+    const double total_weight = 
+        weights.preprocessing + weights.source + weights.claim_verifiability + detection_weight_sum;
+
+    // REFINED scoring formula with dynamic weights
+    const double credibility_core = (total_weight > 0.0) ?
+        ((local_scores.source_score * weights.source) +
+         (local_scores.claim_verifiability_score * weights.claim_verifiability) +
+         (local_scores.preprocessing_score * weights.preprocessing) +
+         (detection_module_average * detection_weight_sum)) / total_weight : 50.0;
     
     const double risk_adjustment =
         (detection_module_average - RISK_ADJUSTMENT_CENTER) * RISK_ADJUSTMENT_MULTIPLIER;
@@ -732,24 +725,23 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
         {"greedy_filtering",   local_scores.greedy_score},
         {"claim_verifiability",local_scores.claim_verifiability_score}
     };
-    last_module_scores = result.module_scores;
-    result.explanations = std::move(local_explanations);
-    last_explanations = result.explanations;
+    {
+        std::lock_guard<std::mutex> lock(last_result_mutex);
+        last_module_scores = result.module_scores;
+        last_explanations = result.explanations;
+    }
     if (risk_penalty > 0.0 || consistency_boost > 0.0) {
         std::stringstream calibration_msg;
         calibration_msg << "Risk calibration applied (penalty: " << risk_penalty
                         << ", boost: " << consistency_boost << ")";
         result.explanations.push_back("[Score Calibration] " + calibration_msg.str());
+        std::lock_guard<std::mutex> lock(last_result_mutex);
         last_explanations = result.explanations;
     }
 
     if (ml_enabled) {
-        const MlInferenceResult ml = run_ml_inference(
-            ml_inference_script_path,
-            ml_model_path,
-            ml_tokenizer_path,
-            ml_articles_path,
-            combined_text
+        const MlInferenceResult ml = run_ml_inference_ipc(
+            combined_text, ml_write_fd, ml_read_fd, ml_ipc_mutex
         );
 
         if (ml.ok) {
@@ -834,8 +826,9 @@ void ScoringEngine::set_module_weights(double preprocessing_weight,
                                      double rabin_karp_weight,
                                      double frequency_weight,
                                      double temporal_weight,
-                                     double greedy_weight) {
-    std::lock_guard<std::mutex> lock(assess_mutex);
+                                     double greedy_weight,
+                                     double claim_weight) {
+    std::lock_guard<std::mutex> lock(last_result_mutex);
     weights.preprocessing = preprocessing_weight;
     weights.source = source_weight;
     weights.phrase = phrase_weight;
@@ -844,22 +837,23 @@ void ScoringEngine::set_module_weights(double preprocessing_weight,
     weights.frequency = frequency_weight;
     weights.temporal = temporal_weight;
     weights.greedy = greedy_weight;
+    weights.claim_verifiability = claim_weight;
 }
 
 // get_module_scores() and get_explanations() are superseded by CredibilityResult fields.
 // Kept for API compatibility; callers should use assess_article() return value instead.
 std::unordered_map<std::string, double> ScoringEngine::get_module_scores() const {
-    std::lock_guard<std::mutex> lock(assess_mutex);
+    std::lock_guard<std::mutex> lock(last_result_mutex);
     return last_module_scores;
 }
 
 std::vector<std::string> ScoringEngine::get_explanations() const {
-    std::lock_guard<std::mutex> lock(assess_mutex);
+    std::lock_guard<std::mutex> lock(last_result_mutex);
     return last_explanations;
 }
 
 void ScoringEngine::reset() {
-    std::lock_guard<std::mutex> lock(assess_mutex);
+    std::lock_guard<std::mutex> lock(last_result_mutex);
     initialized_resources = false;
     ml_enabled = false;
     ml_blend_weight = 0.0;
