@@ -4,12 +4,15 @@
 #include <string>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace newsscope {
 namespace utils {
 
 inline double clamp_score(double score, double min_val = 0.0, double max_val = 100.0) {
-    return std::max(min_val, std::min(score, max_val));
+    // Round to 4 decimal places to minimize floating-point precision loss
+    const double clamped = std::max(min_val, std::min(score, max_val));
+    return std::round(clamped * 10000.0) / 10000.0;
 }
 
 inline std::string to_lower_copy(const std::string& str) {

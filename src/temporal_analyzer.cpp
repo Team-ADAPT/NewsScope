@@ -67,17 +67,22 @@ double TemporalAnalyzer::calculate_frequency_stats(const std::string& term,
         return 0.0;
     }
     
-    // Calculate mean
+    // Calculate mean with bounds checking
     double sum = 0.0;
     for (int freq : frequencies) {
-        sum += freq;
+        // Clamp frequency to reasonable range to prevent overflow
+        constexpr int MAX_FREQUENCY = 1000000;
+        int clamped_freq = std::min(freq, MAX_FREQUENCY);
+        sum += clamped_freq;
     }
     mean = sum / frequencies.size();
     
     // Calculate standard deviation
     double variance = 0.0;
     for (int freq : frequencies) {
-        double diff = freq - mean;
+        constexpr int MAX_FREQUENCY = 1000000;
+        int clamped_freq = std::min(freq, MAX_FREQUENCY);
+        double diff = clamped_freq - mean;
         variance += diff * diff;
     }
     variance /= frequencies.size();
@@ -85,7 +90,8 @@ double TemporalAnalyzer::calculate_frequency_stats(const std::string& term,
     
     // Spike severity: how far is recent entry from mean
     if (!frequencies.empty() && stddev > 0) {
-        int latest = frequencies.back();
+        constexpr int MAX_FREQUENCY = 1000000;
+        int latest = std::min(frequencies.back(), MAX_FREQUENCY);
         double z_score = (latest - mean) / stddev;
         // Convert z-score to 0-1 range (assuming z > 3 is extreme)
         return std::min(1.0, std::max(0.0, z_score / 5.0));
@@ -105,19 +111,28 @@ std::vector<std::pair<std::string, double>> TemporalAnalyzer::get_detected_spike
     }
 
     std::vector<std::pair<std::string, double>> spikes;
+    constexpr int MAX_FREQUENCY = 1000000;
+    
     for (auto& [term, freqs] : term_freqs) {
         if (freqs.size() < 2) continue;
 
         double sum = 0.0;
-        for (int f : freqs) sum += f;
+        for (int f : freqs) {
+            sum += std::min(f, MAX_FREQUENCY);  // Bounds checking
+        }
         double mean = sum / freqs.size();
 
         double variance = 0.0;
-        for (int f : freqs) { double d = f - mean; variance += d * d; }
+        for (int f : freqs) {
+            int clamped_f = std::min(f, MAX_FREQUENCY);
+            double d = clamped_f - mean;
+            variance += d * d;
+        }
         double stddev = std::sqrt(variance / freqs.size());
 
         if (stddev <= 0.0) continue;
-        double z = (freqs.back() - mean) / stddev;
+        int latest_clamped = std::min(freqs.back(), MAX_FREQUENCY);
+        double z = (latest_clamped - mean) / stddev;
         double severity = std::min(1.0, std::max(0.0, z / 5.0));
         if (severity > 0.3) {
             spikes.push_back({term, severity});
@@ -152,11 +167,12 @@ double TemporalAnalyzer::get_average_frequency(const std::string& term) {
     cleanup_expired_entries();
     
     double total = 0.0;
-    int count = 0;
+    size_t count = 0;  // Use size_t instead of int to prevent overflow
+    constexpr int MAX_FREQUENCY = 1000000;
     
     for (const auto& entry : time_window) {
         if (entry.term == term) {
-            total += entry.frequency;
+            total += std::min(entry.frequency, MAX_FREQUENCY);
             count++;
         }
     }

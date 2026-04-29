@@ -479,9 +479,17 @@ void ScoringEngine::initialize(const std::string& sources_csv,
                     }
                     if (trim_copy(ready_str) != "READY") {
                         ml_enabled = false;
+                        close(ml_write_fd);
+                        close(ml_read_fd);
+                        ml_write_fd = -1;
+                        ml_read_fd = -1;
                     }
                 } else {
                     ml_enabled = false;
+                    close(pipe_to_child[0]);
+                    close(pipe_to_child[1]);
+                    close(pipe_from_child[0]);
+                    close(pipe_from_child[1]);
                 }
             } else {
                 ml_enabled = false;

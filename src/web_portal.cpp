@@ -52,7 +52,7 @@ struct HttpRequest {
 };
 
 std::atomic<bool> g_running{true};
-int g_server_fd = -1;
+std::atomic<int> g_server_fd{-1};
 constexpr size_t MAX_IN_FLIGHT_JOBS = 2000;
 constexpr size_t MAX_STORED_FINISHED_JOBS = 5000;
 const auto FINISHED_JOB_TTL = std::chrono::minutes(10);
@@ -108,6 +108,22 @@ std::string extract_host_from_url(const std::string& url) {
         return "";
     }
     return to_lower(url.substr(host_start, host_end - host_start));
+}
+
+std::string extract_domain_from_url(const std::string& url) {
+    std::string host = extract_host_from_url(url);
+    if (host.empty()) {
+        return "";
+    }
+    
+    // Remove www. prefix for consistency
+    if (host.find("www.") == 0) {
+        host = host.substr(4);
+    }
+    
+    // For subdomains like m.bbc.co.uk or mobile.reuters.com, use the main domain
+    // Keep it simple: just return the host as-is (the source validator will handle it)
+    return host;
 }
 
 bool looks_like_ipv4(const std::string& host) {
@@ -451,19 +467,78 @@ std::vector<std::string> collect_tag_inner_blocks(const std::string& html,
     return blocks;
 }
 
+std::string strip_script_style_tags(const std::string& html) {
+    std::string cleaned;
+    cleaned.reserve(html.size());
+    
+    size_t i = 0;
+    while (i < html.size()) {
+        // Find opening tag
+        const size_t tag_start = html.find('<', i);
+        if (tag_start == std::string::npos) {
+            cleaned.append(html.substr(i));
+            break;
+        }
+        
+        // Add text before tag
+        cleaned.append(html.substr(i, tag_start - i));
+        
+        // Find tag name
+        size_t tag_name_start = tag_start + 1;
+        if (tag_name_start < html.size() && html[tag_name_start] == '/') {
+            tag_name_start++;
+        }
+        
+        const size_t tag_name_end = html.find_first_of("> \t\n", tag_name_start);
+        if (tag_name_end == std::string::npos) {
+            cleaned.append(html.substr(tag_start, 1));
+            ++i;
+            continue;
+        }
+        
+        std::string tag_name = html.substr(tag_name_start, tag_name_end - tag_name_start);
+        tag_name = to_lower(tag_name);
+        
+        // Skip script and style tags and their contents
+        if (tag_name == "script" || tag_name == "style") {
+            const std::string closing_tag = "</" + tag_name + ">";
+            const size_t closing_pos = find_ci(html, closing_tag, tag_start);
+            if (closing_pos != std::string::npos) {
+                i = closing_pos + closing_tag.size();
+                continue;
+            }
+        }
+        
+        // Find end of this tag
+        const size_t tag_end = html.find('>', tag_start);
+        if (tag_end == std::string::npos) {
+            cleaned.append(html.substr(tag_start, 1));
+            ++i;
+        } else {
+            cleaned.append(html.substr(tag_start, tag_end - tag_start + 1));
+            i = tag_end + 1;
+        }
+    }
+    
+    return cleaned;
+}
+
 std::string plain_text_from_html_fragment(const std::string& html_fragment) {
+    // First remove script and style tags
+    const std::string cleaned_html = strip_script_style_tags(html_fragment);
+    
     std::string out;
-    out.reserve(std::min(MAX_FETCH_RESPONSE_BYTES, html_fragment.size()));
+    out.reserve(std::min(MAX_FETCH_RESPONSE_BYTES, cleaned_html.size()));
 
     size_t i = 0;
-    while (i < html_fragment.size()) {
-        if (html_fragment[i] == '<') {
-            const size_t tag_end = html_fragment.find('>', i + 1);
-            i = (tag_end == std::string::npos) ? html_fragment.size() : tag_end + 1;
+    while (i < cleaned_html.size()) {
+        if (cleaned_html[i] == '<') {
+            const size_t tag_end = cleaned_html.find('>', i + 1);
+            i = (tag_end == std::string::npos) ? cleaned_html.size() : tag_end + 1;
             out.push_back(' ');
             continue;
         }
-        out.push_back(html_fragment[i]);
+        out.push_back(cleaned_html[i]);
         ++i;
     }
 
@@ -686,21 +761,28 @@ std::string read_fd_limited(int fd, size_t limit_bytes, bool& truncated) {
     return output;
 }
 
-bool fetch_url_payload(const std::string& url, std::string& payload, std::string& error) {
-    const std::string host = extract_host_from_url(to_lower(url));
-    if (host.empty()) {
-        error = "Could not extract URL host";
-        return false;
+// RAII wrapper for file descriptor cleanup
+struct FDGuard {
+    int fd;
+    explicit FDGuard(int f) : fd(f) {}
+    ~FDGuard() {
+        if (fd >= 0) {
+            close(fd);
+        }
     }
-    std::string resolved_ip;
-    if (!host_resolves_to_public_address(host, resolved_ip)) {
-        error = "URL host does not resolve to a public address";
-        return false;
-    }
+    void release() { fd = -1; }
+    FDGuard(const FDGuard&) = delete;
+    FDGuard& operator=(const FDGuard&) = delete;
+};
 
+bool fetch_url_with_retry(const std::string& url, std::string& payload, std::string& error, 
+                          const std::string& host, const std::string& resolved_ip, int attempt = 1) {
+    const int MAX_ATTEMPTS = 2;
+    const int RETRY_DELAY_MS = 1500;
+    
     int pipe_fds[2];
     if (pipe(pipe_fds) != 0) {
-        error = "Failed to allocate fetch pipeline";
+        error = "Fetching: " + url + " | Error: Failed to allocate fetch pipeline";
         return false;
     }
 
@@ -708,9 +790,13 @@ bool fetch_url_payload(const std::string& url, std::string& payload, std::string
     if (pid < 0) {
         close(pipe_fds[0]);
         close(pipe_fds[1]);
-        error = "Failed to spawn URL fetch process";
+        error = "Fetching: " + url + " | Error: Failed to spawn URL fetch process";
         return false;
     }
+
+    // Use FDGuard in parent to ensure cleanup
+    FDGuard fd_read_guard(pipe_fds[0]);
+    FDGuard fd_write_guard(pipe_fds[1]);
 
     if (pid == 0) {
         dup2(pipe_fds[1], STDOUT_FILENO);
@@ -726,14 +812,30 @@ bool fetch_url_payload(const std::string& url, std::string& payload, std::string
             "--location",
             "--silent",
             "--show-error",
-            "--fail",
             "--proto", "=http,https",
             "--proto-redir", "=http,https",
-            "--max-redirs", "4",
-            "--max-time", "18",
-            "--connect-timeout", "7",
+            "--max-redirs", "5",
+            "--max-time", "20",
+            "--connect-timeout", "8",
             "--compressed",
-            "--user-agent", "NewsScope/1.0",
+            "--cookie-jar", "/dev/null",
+            "--cookie", "session_type=user",
+            "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+            "-H", "Accept-Language: en-US,en;q=0.9",
+            "-H", "Accept-Encoding: gzip, deflate, br",
+            "-H", "Cache-Control: no-cache",
+            "-H", "Pragma: no-cache",
+            "-H", "DNT: 1",
+            "-H", "Connection: keep-alive",
+            "-H", "Upgrade-Insecure-Requests: 1",
+            "-H", "Sec-Fetch-Dest: document",
+            "-H", "Sec-Fetch-Mode: navigate",
+            "-H", "Sec-Fetch-Site: none",
+            "-H", "Sec-Fetch-User: ?1",
+            "-H", "Referer: https://www.google.com/",
+            "-H", "Origin: https://www.google.com",
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+            "--tlsv1.2",
             "--resolve", resolve_arg_80,
             "--resolve", resolve_arg_443,
             "--url", url
@@ -750,10 +852,12 @@ bool fetch_url_payload(const std::string& url, std::string& payload, std::string
         _exit(127);
     }
 
-    close(pipe_fds[1]);
+    fd_write_guard.release();  // Child process will close this
+    close(pipe_fds[1]);  // Parent closes write end to trigger EOF on child's stdout
+    
     bool truncated = false;
-    const std::string output = read_fd_limited(pipe_fds[0], MAX_FETCH_RESPONSE_BYTES, truncated);
-    close(pipe_fds[0]);
+    const std::string output = read_fd_limited(fd_read_guard.fd, MAX_FETCH_RESPONSE_BYTES, truncated);
+    // fd_read_guard will close the fd automatically on exit
 
     int status = 0;
     int exit_code = -1;
@@ -762,8 +866,25 @@ bool fetch_url_payload(const std::string& url, std::string& payload, std::string
     }
 
     if (exit_code != 0) {
-        error = output.empty() ? ("curl failed (exit code " + std::to_string(exit_code) + ")")
-                               : trim(output);
+        std::string curl_error = output.empty() ? ("curl failed (exit code " + std::to_string(exit_code) + ")")
+                                                 : trim(output);
+        
+        // Retry on specific errors
+        if (attempt < MAX_ATTEMPTS && 
+            (curl_error.find("401") != std::string::npos ||
+             curl_error.find("429") != std::string::npos ||
+             curl_error.find("timeout") != std::string::npos ||
+             curl_error.find("Temporary failure") != std::string::npos ||
+             curl_error.find("Empty reply") != std::string::npos)) {
+            
+            usleep(RETRY_DELAY_MS * 1000);
+            return fetch_url_with_retry(url, payload, error, host, resolved_ip, attempt + 1);
+        }
+        
+        error = "Fetching: " + url + " | Error: " + curl_error;
+        if (attempt > 1) {
+            error += " (after " + std::to_string(attempt) + " attempts)";
+        }
         return false;
     }
 
@@ -772,6 +893,21 @@ bool fetch_url_payload(const std::string& url, std::string& payload, std::string
         payload = payload + " ";
     }
     return !payload.empty();
+}
+
+bool fetch_url_payload(const std::string& url, std::string& payload, std::string& error) {
+    const std::string host = extract_host_from_url(to_lower(url));
+    if (host.empty()) {
+        error = "Fetching: " + url + " | Error: Could not extract URL host";
+        return false;
+    }
+    std::string resolved_ip;
+    if (!host_resolves_to_public_address(host, resolved_ip)) {
+        error = "Fetching: " + url + " | Error: URL host does not resolve to a public address";
+        return false;
+    }
+
+    return fetch_url_with_retry(url, payload, error, host, resolved_ip);
 }
 
 std::string json_escape(const std::string& s) {
@@ -798,6 +934,9 @@ std::string read_file(const std::vector<std::string>& paths) {
         }
         std::ostringstream ss;
         ss << in.rdbuf();
+        if (in.fail()) {
+            continue;  // Failed to read, try next path
+        }
         return ss.str();
     }
     return "";
@@ -892,6 +1031,7 @@ void send_response(int fd, int code, const std::string& content_type, const std:
 }
 
 size_t extract_content_length(const std::string& header_blob) {
+    constexpr size_t MAX_CONTENT_LENGTH = 50 * 1024 * 1024;  // 50MB cap
     std::istringstream iss(header_blob);
     std::string line;
     (void)std::getline(iss, line);
@@ -907,7 +1047,8 @@ size_t extract_content_length(const std::string& header_blob) {
         std::string value = trim(line.substr(sep + 1));
         if (key == "content-length") {
             try {
-                return static_cast<size_t>(std::stoull(value));
+                size_t len = static_cast<size_t>(std::stoull(value));
+                return len > MAX_CONTENT_LENGTH ? MAX_CONTENT_LENGTH : len;
             } catch (const std::exception&) {
                 return 0;
             }
@@ -1013,8 +1154,12 @@ bool parse_json_string_value(const std::string& body, size_t& pos, std::string& 
     ++pos;
     out.clear();
     bool escaped = false;
+    constexpr size_t MAX_STRING_LENGTH = 1024 * 1024;  // 1MB max per string
 
     while (pos < body.size()) {
+        if (out.size() > MAX_STRING_LENGTH) {
+            return false;  // String too long
+        }
         const char c = body[pos++];
         if (escaped) {
             switch (c) {
@@ -1046,6 +1191,13 @@ bool parse_request_json_object(const std::string& body,
                                std::unordered_map<std::string, std::string>& values) {
     values.clear();
     size_t pos = 0;
+    constexpr size_t MAX_FIELDS = 1000;  // Limit number of fields
+    constexpr size_t MAX_JSON_SIZE = 10 * 1024 * 1024;  // 10MB max JSON
+    
+    if (body.size() > MAX_JSON_SIZE) {
+        return false;  // JSON too large
+    }
+    
     skip_json_whitespace(body, pos);
     if (pos >= body.size() || body[pos] != '{') {
         return false;
@@ -1053,6 +1205,9 @@ bool parse_request_json_object(const std::string& body,
     ++pos;
 
     while (true) {
+        if (values.size() > MAX_FIELDS) {
+            return false;  // Too many fields
+        }
         skip_json_whitespace(body, pos);
         if (pos >= body.size()) {
             return false;
@@ -1340,8 +1495,15 @@ private:
 
     void handle_submit_job(int fd, const HttpRequest& request) {
         const auto content_type_it = request.headers.find("content-type");
-        if (content_type_it == request.headers.end() ||
-            to_lower(content_type_it->second).find("application/json") == std::string::npos) {
+        if (content_type_it == request.headers.end()) {
+            send_response(fd, 400, "application/json",
+                          "{\"error\":\"Content-Type must be application/json.\"}");
+            return;
+        }
+        
+        // Trim and lowercase the Content-Type value for comparison
+        std::string content_type_lower = to_lower(trim(content_type_it->second));
+        if (content_type_lower.find("application/json") == std::string::npos) {
             send_response(fd, 400, "application/json",
                           "{\"error\":\"Content-Type must be application/json.\"}");
             return;
@@ -1439,11 +1601,19 @@ private:
                 std::string payload;
                 std::string fetch_error;
                 if (!fetch_url_payload(url, payload, fetch_error)) {
-                    throw std::runtime_error("Unable to fetch article URL: " + fetch_error);
+                    // Provide more context in error message
+                    std::string detailed_error = fetch_error;
+                    if (fetch_error.find("401") != std::string::npos || fetch_error.find("Forbidden") != std::string::npos) {
+                        detailed_error += " | Note: Site may be protected by anti-bot measures (Cloudflare, etc.)";
+                    }
+                    if (fetch_error.find("Empty reply") != std::string::npos) {
+                        detailed_error += " | Note: Site blocked the connection. Try copying text manually.";
+                    }
+                    throw std::runtime_error("Unable to fetch article URL: " + detailed_error);
                 }
                 resolved_text = build_article_text_from_url_payload(url, payload);
                 if (resolved_text.empty()) {
-                    throw std::runtime_error("Unable to extract readable article text from URL");
+                    throw std::runtime_error("Unable to extract readable article text from URL. The fetched HTML may not contain article content. Try copying text manually instead.");
                 }
                 used_url_input = true;
             }
@@ -1452,13 +1622,25 @@ private:
                 throw std::runtime_error("No analyzable text provided");
             }
 
-            const std::string final_source = source.empty() ? "Unknown Source" : source;
+            // Extract domain from URL if no source provided
+            std::string final_source = source;
+            if (final_source.empty() && !url.empty()) {
+                final_source = extract_domain_from_url(url);
+                if (final_source.empty()) {
+                    final_source = "Unknown Source";
+                }
+            }
+            if (final_source.empty()) {
+                final_source = "Unknown Source";
+            }
+            
             const std::string headline = first_line_headline(resolved_text);
             const std::string body = body_without_headline(resolved_text);
             const Article article(job_id, headline, body, final_source);
             CredibilityResult result = engine.assess_article(article);
             if (used_url_input) {
                 result.explanations.push_back("[Input] URL source: " + url);
+                result.explanations.push_back("[Detected] Domain: " + final_source);
             }
             const VerdictDecision verdict = classify_verdict(result);
             result.explanations.push_back("[Verdict] " + verdict.reason);
@@ -1559,6 +1741,7 @@ void signal_handler(int) {
 int main() {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
+    std::signal(SIGCHLD, SIG_IGN);  // Prevent zombie processes
 
     int port = 8080;
     if (const char* env_port = std::getenv("PORT")) {
