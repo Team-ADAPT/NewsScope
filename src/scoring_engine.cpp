@@ -21,8 +21,13 @@ namespace {
 // =============================================================================
 
 // Base scores
-constexpr double BASE_SCORE = 100.0;
+constexpr double BASE_SCORE = 60.0;  // neutral baseline: "no evidence" ≠ "confirmed credible"
+constexpr double DETECTION_MAX_SCORE = 100.0;  // detection modules can earn up to this via clean-text bonus
 constexpr double BASELINE_PREPROCESSING_SCORE = 50.0;  // neutral baseline; no article should start inflated
+
+// Text-length confidence: longer clean text earns more credibility on detection modules
+constexpr size_t TEXT_LENGTH_FULL_CONFIDENCE = 80;  // token count for full confidence bonus
+constexpr double CLEAN_TEXT_BONUS_MAX = 40.0;  // max bonus detection modules can earn (60+40=100)
 
 // Short text handling
 constexpr size_t SHORT_TEXT_THRESHOLD_CRITICAL = 5;
@@ -79,9 +84,9 @@ constexpr double CLAIM_WEIGHT = 0.34;
 constexpr double PREPROCESSING_WEIGHT = 0.12;  // reduced: preprocessing is less critical than detection
 constexpr double DETECTION_WEIGHT = 0.24;      // increased: detection signals are more important
 
-// Risk adjustment: detection avg above/below 75 nudges final score slightly
-constexpr double RISK_ADJUSTMENT_CENTER = 75.0;
-constexpr double RISK_ADJUSTMENT_MULTIPLIER = 0.15;  // reduced: detection shouldn't dominate
+// Risk adjustment: detection avg above/below neutral nudges final score slightly
+constexpr double RISK_ADJUSTMENT_CENTER = 60.0;
+constexpr double RISK_ADJUSTMENT_MULTIPLIER = 0.12;  // reduced: detection shouldn't dominate
 
 // ML fusion safety: avoid low-confidence ML outputs dragging strong deterministic assessments.
 constexpr double ML_CONFIDENCE_GATE = 0.20;
@@ -531,9 +536,13 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
                << local_scores.source_score << "/100)";
     add_expl("Source Validation", local_scores.source_score, source_msg.str());
     
+    // Text-length confidence factor: longer clean text earns higher detection scores
+    const double text_confidence = std::min(1.0, static_cast<double>(tokens.size()) / static_cast<double>(TEXT_LENGTH_FULL_CONFIDENCE));
+    const double clean_text_bonus = text_confidence * CLEAN_TEXT_BONUS_MAX;
+
     auto found_phrases = phrase_indexer->find_in_text(combined_text);
     double phrase_penalty = std::min(MAX_PHRASE_PENALTY, static_cast<double>(found_phrases.size()) * PHRASE_PENALTY_PER_HIT);
-    local_scores.phrase_score = clamp_score(BASE_SCORE - phrase_penalty);
+    local_scores.phrase_score = clamp_score(BASE_SCORE + (found_phrases.empty() ? clean_text_bonus : 0.0) - phrase_penalty);
     std::stringstream phrase_msg;
     phrase_msg << "Found " << found_phrases.size() << " suspicious phrase(s)";
     add_expl("Phrase Indexing", local_scores.phrase_score, phrase_msg.str());
@@ -542,7 +551,7 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
 
     size_t kmp_matches = count_context_aware_hits(normalized_text, malicious_patterns);
     double kmp_penalty = std::min(MAX_KMP_PENALTY, static_cast<double>(kmp_matches) * KMP_PENALTY_PER_HIT);
-    local_scores.kmp_score = clamp_score(BASE_SCORE - kmp_penalty);
+    local_scores.kmp_score = clamp_score(BASE_SCORE + (kmp_matches == 0 ? clean_text_bonus : 0.0) - kmp_penalty);
     std::stringstream kmp_msg;
     kmp_msg << "KMP found " << kmp_matches << " suspicious pattern(s)";
     add_expl("KMP Matching", local_scores.kmp_score, kmp_msg.str());
@@ -558,7 +567,7 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
         unique_pattern_hits.insert(entry.second);
     }
     double rk_penalty = std::min(MAX_RABIN_KARP_PENALTY, static_cast<double>(unique_pattern_hits.size()) * RABIN_KARP_PENALTY_PER_HIT);
-    local_scores.rabin_karp_score = clamp_score(BASE_SCORE - rk_penalty);
+    local_scores.rabin_karp_score = clamp_score(BASE_SCORE + (unique_pattern_hits.empty() ? clean_text_bonus : 0.0) - rk_penalty);
 
     std::stringstream rk_msg;
     rk_msg << "Rabin-Karp found " << unique_pattern_hits.size() << " unique suspicious pattern(s)";
@@ -567,7 +576,8 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     auto freq_result = frequency_analyzer->analyze(tokens, normalized_text);
     double freq_suspicion = freq_result.suspicion_score;
     double freq_penalty = std::min(MAX_FREQUENCY_PENALTY, freq_suspicion * FREQUENCY_PENALTY_MULTIPLIER);
-    local_scores.frequency_score = clamp_score(BASE_SCORE - freq_penalty);
+    const bool freq_clean = (freq_suspicion < SUSPICION_THRESHOLD);
+    local_scores.frequency_score = clamp_score(BASE_SCORE + (freq_clean ? clean_text_bonus : 0.0) - freq_penalty);
     auto top_negative = freq_result.top_negative_terms;
     std::stringstream freq_msg;
     freq_msg << "Found " << top_negative.size() << " negative term(s): ";
@@ -578,14 +588,15 @@ CredibilityResult ScoringEngine::assess_article(const Article& article) {
     
     temporal_analyzer->add_entry(article.source, tokens.size(), article.timestamp);
     double temporal_spike = temporal_analyzer->get_spike_score();
-    local_scores.temporal_score = clamp_score(BASE_SCORE - temporal_spike);
+    local_scores.temporal_score = clamp_score(BASE_SCORE + (temporal_spike < 5.0 ? clean_text_bonus : 0.0) - temporal_spike);
     std::stringstream temporal_msg;
     temporal_msg << "Temporal spike score: " << temporal_spike << "/100";
     add_expl("Temporal Analysis", local_scores.temporal_score, temporal_msg.str());
     
     auto greedy_result = greedy_filter->analyze_article(article.headline, article.body);
     double greedy_manipulation = greedy_result.manipulation_score;
-    local_scores.greedy_score = clamp_score(BASE_SCORE - greedy_manipulation);
+    const bool greedy_clean = (greedy_manipulation < 15.0);
+    local_scores.greedy_score = clamp_score(BASE_SCORE + (greedy_clean ? clean_text_bonus : 0.0) - greedy_manipulation);
     auto signals = greedy_result.detected_signals;
     std::stringstream greedy_msg;
     greedy_msg << "Detected " << signals.size() << " manipulation signal(s)";

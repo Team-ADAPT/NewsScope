@@ -11,4 +11,6 @@ COPY --from=builder /app/build/newsscope_webserver ./
 COPY --from=builder /app/data ./data
 COPY --from=builder /app/web ./web
 EXPOSE 8080
+ENV NEWSSCOPE_ENABLE_ML=1 \
+    NEWSSCOPE_ML_BLEND_WEIGHT=0.25
 CMD ["./newsscope_webserver"]

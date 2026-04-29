@@ -75,7 +75,7 @@ $(OBJ_DIR):
 
 run: $(DEMO_TARGET)
 	@echo "\n=== Running NewsScope Demo ===\n"
-	@$(DEMO_TARGET)
+	@NEWSSCOPE_ENABLE_ML=1 NEWSSCOPE_ML_BLEND_WEIGHT=0.25 $(DEMO_TARGET)
 
 run-web: $(WEB_TARGET)
 	@echo "\n=== Running NewsScope Web Server ===\n"
@@ -86,7 +86,7 @@ run-tests: $(TEST_TARGETS)
 	@echo "\n=== Running All Tests ===\n"
 	@for test in $(TEST_TARGETS); do \
 		echo "\nRunning $$test..."; \
-		NEWSSCOPE_ENABLE_ML=0 $$test || exit 1; \
+		NEWSSCOPE_ENABLE_ML=1 NEWSSCOPE_ML_BLEND_WEIGHT=0.25 $$test || exit 1; \
 	done
 	@echo "\n✓ All tests passed!"
 
